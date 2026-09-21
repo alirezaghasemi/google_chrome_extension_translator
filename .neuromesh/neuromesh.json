@@ -1,0 +1,15 @@
+{
+  "project_facts": {
+    "google_chorme_extension:framework:javascript_toolchain": {
+      "id": "df75f9e1-ddf7-4195-bb7a-cfe2dd8e1a51",
+      "project_id": "google_chorme_extension",
+      "category": "framework",
+      "key": "javascript_toolchain",
+      "content": "Node/TypeScript project with package.json",
+      "confidence": 1.0,
+      "created_at": "2026-09-04T19:38:23.628419421Z",
+      "updated_at": "2026-09-04T19:38:23.628419421Z"
+    }
+  },
+  "episodes": []
+}
