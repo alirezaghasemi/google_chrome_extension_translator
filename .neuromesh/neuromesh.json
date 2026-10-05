@@ -9,6 +9,16 @@
       "confidence": 1.0,
       "created_at": "2026-09-04T19:38:23.628419421Z",
       "updated_at": "2026-09-04T19:38:23.628419421Z"
+    },
+    "google_chrome_extension_translator:framework:javascript_toolchain": {
+      "id": "e8e31227-562c-4d48-93c7-c436874bb80b",
+      "project_id": "google_chrome_extension_translator",
+      "category": "framework",
+      "key": "javascript_toolchain",
+      "content": "Node/TypeScript project with package.json",
+      "confidence": 1.0,
+      "created_at": "2026-10-05T06:50:49.718088696Z",
+      "updated_at": "2026-10-05T06:50:49.718088696Z"
     }
   },
   "episodes": []
