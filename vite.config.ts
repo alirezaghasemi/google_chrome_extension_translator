@@ -11,6 +11,8 @@ export default defineConfig({
       input: {
         popup: resolve(__dirname, 'popup.html'),
         options: resolve(__dirname, 'options.html'),
+        sidepanel: resolve(__dirname, 'sidepanel.html'),
+        pdfViewer: resolve(__dirname, 'pdf-viewer.html'),
         background: resolve(__dirname, 'src/background/service-worker.ts'),
         content: resolve(__dirname, 'src/content/content-script.tsx')
       },

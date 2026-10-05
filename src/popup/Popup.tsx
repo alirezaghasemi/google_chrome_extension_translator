@@ -13,8 +13,12 @@ import {
   Sparkles,
   AlertTriangle,
   CheckCircle2,
-  Globe
+  Globe,
+  BookOpen,
+  FileText,
+  PanelRight
 } from 'lucide-react';
+import { isPdfUrl } from '../services/pdf/pdf-utils';
 import { ExtensionMessage, ExtensionResponse, PageTranslationStateResponse } from '../types/messages';
 
 export const Popup: React.FC = () => {
@@ -22,24 +26,34 @@ export const Popup: React.FC = () => {
   const [isTranslated, setIsTranslated] = useState(false);
   const [isTranslating, setIsTranslating] = useState(false);
   const [activeTabId, setActiveTabId] = useState<number | null>(null);
+  const [activeTabUrl, setActiveTabUrl] = useState<string>('');
+  const [isPdf, setIsPdf] = useState(false);
 
   useEffect(() => {
     storageService.getSettings().then(setSettings);
 
     chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
-      if (tab?.id) {
-        setActiveTabId(tab.id);
-        chrome.tabs
-          .sendMessage(tab.id, { type: 'GET_PAGE_TRANSLATION_STATE' } as ExtensionMessage)
-          .then((resp: ExtensionResponse<PageTranslationStateResponse>) => {
-            if (resp?.success && resp.data) {
-              setIsTranslated(resp.data.isTranslated);
-              setIsTranslating(resp.data.progress.status === 'translating');
-            }
-          })
-          .catch(() => {
-            // Tab may not have content script (e.g. chrome://)
-          });
+      if (tab) {
+        if (tab.id) setActiveTabId(tab.id);
+        if (tab.url) {
+          setActiveTabUrl(tab.url);
+          const isPdfDoc = isPdfUrl(tab.url) || Boolean(tab.title?.toLowerCase().endsWith('.pdf'));
+          setIsPdf(isPdfDoc);
+        }
+
+        if (tab.id) {
+          chrome.tabs
+            .sendMessage(tab.id, { type: 'GET_PAGE_TRANSLATION_STATE' } as ExtensionMessage)
+            .then((resp: ExtensionResponse<PageTranslationStateResponse>) => {
+              if (resp?.success && resp.data) {
+                setIsTranslated(resp.data.isTranslated);
+                setIsTranslating(resp.data.progress.status === 'translating');
+              }
+            })
+            .catch(() => {
+              // Tab may not have content script (e.g. PDF tab or chrome://)
+            });
+        }
       }
     });
   }, []);
@@ -108,6 +122,23 @@ export const Popup: React.FC = () => {
     window.close();
   };
 
+  const handleOpenPdfTranslator = () => {
+    chrome.tabs.create({
+      url: chrome.runtime.getURL(
+        `pdf-viewer.html${activeTabUrl ? `?src=${encodeURIComponent(activeTabUrl)}` : ''}`
+      )
+    });
+    window.close();
+  };
+
+  const handleOpenSidePanel = () => {
+    if (activeTabId) {
+      const sidePanelAny = (chrome as unknown as { sidePanel?: { open?: (opts: { tabId?: number }) => Promise<void> } }).sidePanel;
+      sidePanelAny?.open?.({ tabId: activeTabId });
+    }
+    window.close();
+  };
+
   const toggleUiLanguage = () => {
     const nextLang = settings.uiLanguage === 'fa' ? 'en' : 'fa';
     handleUpdateSetting('uiLanguage', nextLang);
@@ -152,6 +183,77 @@ export const Popup: React.FC = () => {
             <span>{t.status.apiMissing}</span>
           </div>
           <span style={{ textDecoration: 'underline' }}>Configure</span>
+        </div>
+      )}
+
+      {/* PDF Detected Banner */}
+      {isPdf && (
+        <div
+          style={{
+            background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(168, 85, 247, 0.18))',
+            border: '1px solid rgba(99, 102, 241, 0.35)',
+            borderRadius: '10px',
+            padding: '12px',
+            marginBottom: '14px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <FileText size={18} color="#818cf8" />
+            <strong style={{ fontSize: '13px', color: '#c7d2fe' }}>{t.pdf.detected}</strong>
+          </div>
+
+          <p style={{ fontSize: '11px', color: '#94a3b8', margin: 0, lineHeight: 1.4 }}>
+            {t.pdf.detectedDesc}
+          </p>
+
+          <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+            <button
+              onClick={handleOpenPdfTranslator}
+              style={{
+                flex: 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                background: 'linear-gradient(135deg, #4f46e5, #7c3aed)',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '6px',
+                padding: '8px 10px',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              <BookOpen size={14} />
+              <span>{t.pdf.openInReader}</span>
+            </button>
+
+            <button
+              onClick={handleOpenSidePanel}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                background: 'rgba(255, 255, 255, 0.08)',
+                color: '#f8fafc',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                borderRadius: '6px',
+                padding: '8px 10px',
+                fontSize: '12px',
+                fontWeight: 500,
+                cursor: 'pointer'
+              }}
+              title={t.pdf.openSidePanel}
+            >
+              <PanelRight size={14} />
+              <span>{t.actions.openSidePanel}</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -262,6 +364,33 @@ export const Popup: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Quick Launch PDF Translator */}
+      {!isPdf && (
+        <div style={{ marginTop: 10 }}>
+          <button
+            onClick={handleOpenPdfTranslator}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              background: 'rgba(99, 102, 241, 0.08)',
+              border: '1px dashed rgba(99, 102, 241, 0.3)',
+              borderRadius: '8px',
+              padding: '8px 12px',
+              fontSize: '12px',
+              fontWeight: 500,
+              color: '#818cf8',
+              cursor: 'pointer'
+            }}
+          >
+            <BookOpen size={14} />
+            <span>{t.actions.openPdfTranslator}...</span>
+          </button>
+        </div>
+      )}
 
       {/* Footer */}
       <div className="popup-footer">

@@ -23,7 +23,27 @@ export const en = {
     deleteKey: 'Delete Key',
     download: 'Download',
     copyImage: 'Copy Image',
-    settings: 'Settings'
+    settings: 'Settings',
+    translatePdf: 'Translate PDF',
+    openPdfTranslator: 'AI PDF Translator',
+    openSidePanel: 'Open Side Panel',
+    translatePdfPage: 'Translate Page',
+    translateEntirePdf: 'Translate Full PDF',
+    bilingualMode: 'Bilingual View',
+    exportTranslation: 'Export Translation'
+  },
+  pdf: {
+    detected: 'PDF Document Detected',
+    detectedDesc: 'This PDF is currently open in your browser. You can read it with bilingual translation or use the side panel for selection translations.',
+    openInReader: 'Read & Translate in AI PDF Viewer',
+    openSidePanel: 'Open Translation Side Panel',
+    dropPdfHere: 'Drop PDF file here, or click to browse',
+    pageOf: 'Page {current} of {total}',
+    translatingPage: 'Translating page...',
+    translatingDoc: 'Translating entire PDF...',
+    pageTranslated: 'Page translated',
+    noTextFound: 'No extractable text found on this page (likely a scanned image).',
+    allowFileUrlsHint: 'To open local file:/// PDFs, enable "Allow access to file URLs" in chrome://extensions or drag the file into this tab.'
   },
   status: {
     apiConfigured: 'Gemini API Configured',

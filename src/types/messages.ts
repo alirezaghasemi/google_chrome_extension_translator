@@ -18,7 +18,10 @@ export type ExtensionMessageType =
   | 'GET_PAGE_TRANSLATION_STATE'
   | 'PAGE_TRANSLATION_STATE_UPDATE'
   | 'TRANSLATE_SELECTED_TEXT'
-  | 'OPEN_OPTIONS_PAGE';
+  | 'OPEN_OPTIONS_PAGE'
+  | 'OPEN_PDF_TRANSLATOR'
+  | 'OPEN_SIDE_PANEL'
+  | 'TRANSLATE_TEXT_DIRECT';
 
 export interface ExtensionMessage<T = unknown> {
   type: ExtensionMessageType;
@@ -52,4 +55,17 @@ export interface PageTranslationStateResponse {
 
 export interface TranslateSelectionPayload {
   text: string;
+}
+
+export interface OpenPdfTranslatorPayload {
+  url?: string;
+}
+
+export interface OpenSidePanelPayload {
+  tabId?: number;
+}
+
+export interface TranslateTextDirectPayload {
+  text: string;
+  targetLanguage?: string;
 }

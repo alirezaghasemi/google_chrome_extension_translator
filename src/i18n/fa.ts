@@ -23,7 +23,27 @@ export const fa = {
     deleteKey: 'حذف کلید',
     download: 'دانلود تصویر',
     copyImage: 'کپی در کلیپ‌بورد',
-    settings: 'تنظیمات'
+    settings: 'تنظیمات',
+    translatePdf: 'ترجمه سند PDF',
+    openPdfTranslator: 'مترجم هوشمند PDF',
+    openSidePanel: 'پنل کناری ترجمه',
+    translatePdfPage: 'ترجمه این صفحه',
+    translateEntirePdf: 'ترجمه کل PDF',
+    bilingualMode: 'نمایش دوزبانه',
+    exportTranslation: 'خروجی ترجمه'
+  },
+  pdf: {
+    detected: 'سند PDF در حال نمایش',
+    detectedDesc: 'این فایل در مرورگر در حال نمایش است. می‌توانید آن را به صورت دوزبانه مطالعه کرده یا از پنل کناری ترجمه استفاده کنید.',
+    openInReader: 'مطالعه و ترجمه دوزبانه PDF',
+    openSidePanel: 'باز کردن پنل کناری ترجمه',
+    dropPdfHere: 'فایل PDF را اینجا رها کنید، یا کلیک کنید',
+    pageOf: 'صفحه {current} از {total}',
+    translatingPage: 'در حال ترجمه صفحه...',
+    translatingDoc: 'در حال ترجمه کل سند PDF...',
+    pageTranslated: 'صفحه ترجمه شد',
+    noTextFound: 'متن قابل استخراجی در این صفحه یافت نشد (احتمالاً فایل اسکن‌شده یا تصویری است)',
+    allowFileUrlsHint: 'برای باز کردن فایل‌های محلی PDF، گزینه "Allow access to file URLs" را در تنظیمات افزونه کروم فعال کنید یا فایل را مستقیماً در این صفحه بکشید.'
   },
   status: {
     apiConfigured: 'کلید API جمینای فعال است',

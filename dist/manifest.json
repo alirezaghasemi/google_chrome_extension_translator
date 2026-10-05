@@ -7,11 +7,28 @@
     "storage",
     "activeTab",
     "scripting",
-    "contextMenus"
+    "contextMenus",
+    "sidePanel",
+    "notifications"
   ],
   "host_permissions": [
     "<all_urls>",
     "https://generativelanguage.googleapis.com/*"
+  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "pdf.worker.min.mjs",
+        "pdf-viewer.html",
+        "sidepanel.html"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
   ],
   "background": {
     "service_worker": "background.js",
@@ -21,7 +38,8 @@
     {
       "matches": [
         "http://*/*",
-        "https://*/*"
+        "https://*/*",
+        "file://*/*"
       ],
       "js": [
         "content.js"

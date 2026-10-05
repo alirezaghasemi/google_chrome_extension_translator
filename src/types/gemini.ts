@@ -41,16 +41,18 @@ export interface GeminiResponse {
   };
 }
 
+export interface TermExplanation {
+  term: string;
+  meaning: string;
+  context?: string;
+}
+
 export interface StructuredTranslationPayload {
   sourceLanguage: string;
   targetLanguage: string;
   translation: string;
   detectedText?: string;
-  explanations?: Array<{
-    term: string;
-    meaning: string;
-    context?: string;
-  }>;
+  explanations?: TermExplanation[];
 }
 
 export interface StructuredBatchTranslationPayload {
