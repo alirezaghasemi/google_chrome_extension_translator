@@ -1,3 +1,5 @@
+@import './shadow-styles.css';
+
 :root {
   --pdf-bg: #0f172a;
   --pdf-panel-bg: #1e293b;
@@ -275,6 +277,21 @@ body, html {
   display: block;
   max-width: 100%;
   height: auto;
+}
+
+.pdf-canvas-wrapper.selecting canvas {
+  cursor: crosshair !important;
+}
+
+/* Persistent Region Selection Highlight on Canvas */
+.pdf-canvas-wrapper .persistent-selection-box {
+  position: absolute !important;
+  border: 2px solid #3b82f6 !important;
+  background: rgba(59, 130, 246, 0.15) !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.6), 0 4px 16px rgba(59, 130, 246, 0.3) !important;
+  border-radius: 4px !important;
+  pointer-events: none !important;
+  z-index: 25 !important;
 }
 
 /* Translation Column */

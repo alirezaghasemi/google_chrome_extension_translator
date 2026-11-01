@@ -23,8 +23,10 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
-  Trash2
+  Trash2,
+  Keyboard
 } from 'lucide-react';
+import { getDisplayShortcut } from '../utils/shortcuts';
 
 type SettingsTab = 'ai' | 'general' | 'translation' | 'panel' | 'screenshot' | 'privacy';
 
@@ -340,6 +342,51 @@ export const Options: React.FC = () => {
                   <option value="dark">{t.settings.general.dark}</option>
                   <option value="light">{t.settings.general.light}</option>
                 </select>
+              </div>
+
+              <div className="form-group" style={{ marginTop: '24px' }}>
+                <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Keyboard size={16} />
+                  <span>{settings.uiLanguage === 'fa' ? 'کلیدهای میانبر (Keyboard Shortcuts)' : 'Keyboard Shortcuts'}</span>
+                </label>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '4px 0 12px 0' }}>
+                  {settings.uiLanguage === 'fa'
+                    ? 'کلیدهای میانبر سریع برای دسترسی به امکانات (فعال روی تمام صفحات وب و داخل پنجره افزونه):'
+                    : 'Quick keyboard shortcuts to trigger extension actions (active on any webpage and inside the popup):'}
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'var(--bg-main)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                    <span style={{ fontWeight: 500 }}>{t.actions.translatePage}</span>
+                    <kbd style={{ padding: '3px 8px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '5px', fontSize: '11px', fontWeight: 600, direction: 'ltr' }}>{getDisplayShortcut('translate-page')}</kbd>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'var(--bg-main)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                    <span style={{ fontWeight: 500 }}>{t.actions.translateRegion}</span>
+                    <kbd style={{ padding: '3px 8px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '5px', fontSize: '11px', fontWeight: 600, direction: 'ltr' }}>{getDisplayShortcut('translate-region')}</kbd>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'var(--bg-main)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                    <span style={{ fontWeight: 500 }}>{t.actions.captureViewport}</span>
+                    <kbd style={{ padding: '3px 8px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '5px', fontSize: '11px', fontWeight: 600, direction: 'ltr' }}>{getDisplayShortcut('capture-screenshot')}</kbd>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'var(--bg-main)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                    <span style={{ fontWeight: 500 }}>{t.actions.captureFullPage}</span>
+                    <kbd style={{ padding: '3px 8px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '5px', fontSize: '11px', fontWeight: 600, direction: 'ltr' }}>{getDisplayShortcut('capture-fullpage')}</kbd>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: '12px' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => chrome.tabs.create({ url: 'chrome://extensions/shortcuts' })}
+                    style={{ fontSize: '12px', padding: '6px 14px', cursor: 'pointer', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-main)' }}
+                  >
+                    {settings.uiLanguage === 'fa' ? 'شخصی‌سازی کلیدها در تنظیمات کروم (chrome://extensions/shortcuts)' : 'Configure Shortcuts in Chrome'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

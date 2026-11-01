@@ -50,6 +50,69 @@ function openPdfTranslatorTab(url?: string): void {
 }
 
 /**
+ * Captures the visible tab and opens the dedicated PDF Snipper tool.
+ */
+async function launchPdfSnipper(tab: chrome.tabs.Tab): Promise<void> {
+  if (!tab?.windowId) return;
+
+  chrome.tabs.captureVisibleTab(
+    tab.windowId,
+    { format: 'png' },
+    async (dataUrl) => {
+      if (chrome.runtime.lastError || !dataUrl) {
+        console.error('Failed to capture PDF tab for snipping:', chrome.runtime.lastError?.message);
+        return;
+      }
+
+      await chrome.storage.local.set({
+        antigravity_snip_data: {
+          image: dataUrl,
+          title: tab.title || 'PDF Document',
+          url: tab.url,
+          timestamp: Date.now()
+        }
+      });
+
+      chrome.tabs.create({
+        url: chrome.runtime.getURL('snip.html'),
+        index: (tab.index ?? 0) + 1
+      });
+    }
+  );
+}
+
+/**
+ * Initiates region selection with fallback to PDF Snipper if content script is unavailable.
+ */
+async function startRegionTranslationFlow(tab: chrome.tabs.Tab): Promise<void> {
+  if (!tab?.id) return;
+
+  const isPdf = isPdfUrl(tab.url) || Boolean(tab.title?.toLowerCase().endsWith('.pdf'));
+
+  if (isPdf) {
+    if (tab.url?.includes('pdf-viewer.html')) {
+      chrome.tabs.sendMessage(tab.id, { type: 'START_REGION_SELECTION' } as ExtensionMessage).catch(() => {});
+      return;
+    }
+    await launchPdfSnipper(tab);
+    return;
+  }
+
+  // Regular web page - attempt content script first
+  try {
+    const resp = await chrome.tabs.sendMessage(tab.id, {
+      type: 'START_REGION_SELECTION'
+    } as ExtensionMessage);
+
+    if (!resp?.success) {
+      await launchPdfSnipper(tab);
+    }
+  } catch {
+    await launchPdfSnipper(tab);
+  }
+}
+
+/**
  * Handles text selection translation with graceful fallback for PDF tabs and restricted pages.
  */
 async function handleSelectionTranslation(selectionText: string, tab: chrome.tabs.Tab): Promise<void> {
@@ -150,9 +213,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     }
 
     if (info.menuItemId === 'antigravity_translate_region') {
-      await chrome.tabs.sendMessage(tab.id, {
-        type: 'START_REGION_SELECTION'
-      } as ExtensionMessage);
+      await startRegionTranslationFlow(tab);
       return;
     }
   } catch (err) {
@@ -173,9 +234,11 @@ chrome.commands.onCommand.addListener(async (command) => {
       }
       await chrome.tabs.sendMessage(tab.id, { type: 'START_PAGE_TRANSLATION' } as ExtensionMessage);
     } else if (command === 'translate-region') {
-      await chrome.tabs.sendMessage(tab.id, { type: 'START_REGION_SELECTION' } as ExtensionMessage);
+      await startRegionTranslationFlow(tab);
     } else if (command === 'capture-screenshot') {
       await chrome.tabs.sendMessage(tab.id, { type: 'TRIGGER_VIEWPORT_SCREENSHOT' } as ExtensionMessage);
+    } else if (command === 'capture-fullpage') {
+      await chrome.tabs.sendMessage(tab.id, { type: 'TRIGGER_FULLPAGE_SCREENSHOT' } as ExtensionMessage);
     }
   } catch (err) {
     console.warn(`Command "${command}" failed on tab:`, err);
@@ -185,6 +248,26 @@ chrome.commands.onCommand.addListener(async (command) => {
 // Runtime message handler
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
   switch (message.type) {
+    case 'LAUNCH_PDF_SNIPPER': {
+      const payload = message.payload as { tabId?: number };
+      const targetTabId = payload?.tabId || sender?.tab?.id;
+      if (targetTabId) {
+        chrome.tabs.get(targetTabId, (targetTab) => {
+          if (targetTab) {
+            launchPdfSnipper(targetTab);
+          }
+        });
+      } else {
+        chrome.tabs.query({ active: true, currentWindow: true }, ([activeTab]) => {
+          if (activeTab) {
+            launchPdfSnipper(activeTab);
+          }
+        });
+      }
+      sendResponse({ success: true } as ExtensionResponse);
+      return true;
+    }
+
     case 'OPEN_PDF_TRANSLATOR': {
       const payload = message.payload as OpenPdfTranslatorPayload;
       openPdfTranslatorTab(payload?.url);

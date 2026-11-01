@@ -21,7 +21,8 @@ export type ExtensionMessageType =
   | 'OPEN_OPTIONS_PAGE'
   | 'OPEN_PDF_TRANSLATOR'
   | 'OPEN_SIDE_PANEL'
-  | 'TRANSLATE_TEXT_DIRECT';
+  | 'TRANSLATE_TEXT_DIRECT'
+  | 'LAUNCH_PDF_SNIPPER';
 
 export interface ExtensionMessage<T = unknown> {
   type: ExtensionMessageType;

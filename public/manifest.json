@@ -23,7 +23,8 @@
       "resources": [
         "pdf.worker.min.mjs",
         "pdf-viewer.html",
-        "sidepanel.html"
+        "sidepanel.html",
+        "snip.html"
       ],
       "matches": [
         "<all_urls>"
@@ -64,21 +65,39 @@
   "commands": {
     "translate-page": {
       "suggested_key": {
-        "default": "Alt+Shift+T"
+        "default": "Alt+Shift+1",
+        "windows": "Ctrl+Shift+1",
+        "linux": "Ctrl+Shift+1",
+        "mac": "Alt+Shift+1"
       },
       "description": "Translate current webpage"
     },
     "translate-region": {
       "suggested_key": {
-        "default": "Alt+Shift+R"
+        "default": "Alt+Shift+2",
+        "windows": "Ctrl+Shift+2",
+        "linux": "Ctrl+Shift+2",
+        "mac": "Alt+Shift+2"
       },
       "description": "Select region to translate"
     },
     "capture-screenshot": {
       "suggested_key": {
-        "default": "Alt+Shift+S"
+        "default": "Alt+Shift+3",
+        "windows": "Ctrl+Shift+3",
+        "linux": "Ctrl+Shift+3",
+        "mac": "Alt+Shift+3"
       },
       "description": "Capture visible viewport screenshot"
+    },
+    "capture-fullpage": {
+      "suggested_key": {
+        "default": "Alt+Shift+4",
+        "windows": "Ctrl+Shift+4",
+        "linux": "Ctrl+Shift+4",
+        "mac": "Alt+Shift+4"
+      },
+      "description": "Capture full page screenshot"
     }
   },
   "icons": {

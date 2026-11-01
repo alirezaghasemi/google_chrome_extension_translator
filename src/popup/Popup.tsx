@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ExtensionSettings, ExplanationLevel } from '../types/settings';
 import { storageService } from '../services/storage/storage-service';
 import { SUPPORTED_LANGUAGES } from '../services/storage/defaults';
@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { isPdfUrl } from '../services/pdf/pdf-utils';
 import { ExtensionMessage, ExtensionResponse, PageTranslationStateResponse } from '../types/messages';
+import { getDisplayShortcut, getActionFromKeyEvent } from '../utils/shortcuts';
 
 export const Popup: React.FC = () => {
   const [settings, setSettings] = useState<ExtensionSettings | null>(null);
@@ -58,11 +59,34 @@ export const Popup: React.FC = () => {
     });
   }, []);
 
-  if (!settings) return null;
+  const handlersRef = useRef<{
+    handleTranslatePage: () => Promise<void>;
+    handleTranslateRegion: () => Promise<void>;
+    handleCaptureViewport: () => Promise<void>;
+    handleCaptureFullPage: () => Promise<void>;
+  }>({
+    handleTranslatePage: async () => {},
+    handleTranslateRegion: async () => {},
+    handleCaptureViewport: async () => {},
+    handleCaptureFullPage: async () => {}
+  });
 
-  const t = getI18n(settings.uiLanguage);
-  const rtl = isRtl(settings.uiLanguage);
-  const hasApiKey = Boolean(settings.geminiApiKey && settings.geminiApiKey.trim().length > 0);
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const action = getActionFromKeyEvent(e);
+      if (!action) return;
+
+      e.preventDefault();
+      const handlers = handlersRef.current;
+      if (action === 'translate-page') handlers.handleTranslatePage();
+      else if (action === 'translate-region') handlers.handleTranslateRegion();
+      else if (action === 'capture-screenshot') handlers.handleCaptureViewport();
+      else if (action === 'capture-fullpage') handlers.handleCaptureFullPage();
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const openOptions = () => {
     chrome.runtime.openOptionsPage();
@@ -77,7 +101,7 @@ export const Popup: React.FC = () => {
   };
 
   const handleTranslatePage = async () => {
-    if (!activeTabId) return;
+    if (!activeTabId || !settings) return;
     try {
       if (isTranslated) {
         await chrome.tabs.sendMessage(activeTabId, {
@@ -100,9 +124,26 @@ export const Popup: React.FC = () => {
 
   const handleTranslateRegion = async () => {
     if (!activeTabId) return;
-    await chrome.tabs.sendMessage(activeTabId, {
-      type: 'START_REGION_SELECTION'
-    } as ExtensionMessage);
+
+    if (isPdf && !activeTabUrl?.includes('pdf-viewer.html')) {
+      await chrome.runtime.sendMessage({
+        type: 'LAUNCH_PDF_SNIPPER',
+        payload: { tabId: activeTabId }
+      } as ExtensionMessage);
+      window.close();
+      return;
+    }
+
+    try {
+      await chrome.tabs.sendMessage(activeTabId, {
+        type: 'START_REGION_SELECTION'
+      } as ExtensionMessage);
+    } catch {
+      await chrome.runtime.sendMessage({
+        type: 'LAUNCH_PDF_SNIPPER',
+        payload: { tabId: activeTabId }
+      } as ExtensionMessage);
+    }
     window.close();
   };
 
@@ -140,9 +181,23 @@ export const Popup: React.FC = () => {
   };
 
   const toggleUiLanguage = () => {
+    if (!settings) return;
     const nextLang = settings.uiLanguage === 'fa' ? 'en' : 'fa';
     handleUpdateSetting('uiLanguage', nextLang);
   };
+
+  handlersRef.current = {
+    handleTranslatePage,
+    handleTranslateRegion,
+    handleCaptureViewport,
+    handleCaptureFullPage
+  };
+
+  if (!settings) return null;
+
+  const t = getI18n(settings.uiLanguage);
+  const rtl = isRtl(settings.uiLanguage);
+  const hasApiKey = Boolean(settings.geminiApiKey && settings.geminiApiKey.trim().length > 0);
 
   return (
     <div className={`popup-container ${rtl ? 'rtl' : ''}`}>
@@ -259,32 +314,74 @@ export const Popup: React.FC = () => {
 
       {/* Actions Grid */}
       <div className="actions-grid">
-        <div className="action-card" onClick={handleTranslatePage}>
-          <div className="action-icon-wrap" style={{ background: isTranslated ? '#fee2e2' : undefined, color: isTranslated ? '#ef4444' : undefined }}>
-            {isTranslated ? <RotateCcw size={18} /> : <Languages size={18} />}
+        <div
+          className="action-card"
+          onClick={handleTranslatePage}
+          title={`${t.actions.translatePage} (${getDisplayShortcut('translate-page')})`}
+        >
+          <div className="action-card-top">
+            <div
+              className="action-icon-wrap"
+              style={{
+                background: isTranslated ? '#fee2e2' : undefined,
+                color: isTranslated ? '#ef4444' : undefined
+              }}
+            >
+              {isTranslated ? <RotateCcw size={18} /> : <Languages size={18} />}
+            </div>
+            <span className="action-shortcut-badge" title="Shortcut">
+              {getDisplayShortcut('translate-page')}
+            </span>
           </div>
           <div className="action-title">
             {isTranslated ? t.actions.restoreOriginal : isTranslating ? t.actions.pause : t.actions.translatePage}
           </div>
         </div>
 
-        <div className="action-card" onClick={handleTranslateRegion}>
-          <div className="action-icon-wrap">
-            <Crop size={18} />
+        <div
+          className="action-card"
+          onClick={handleTranslateRegion}
+          title={`${t.actions.translateRegion} (${getDisplayShortcut('translate-region')})`}
+        >
+          <div className="action-card-top">
+            <div className="action-icon-wrap">
+              <Crop size={18} />
+            </div>
+            <span className="action-shortcut-badge" title="Shortcut">
+              {getDisplayShortcut('translate-region')}
+            </span>
           </div>
           <div className="action-title">{t.actions.translateRegion}</div>
         </div>
 
-        <div className="action-card" onClick={handleCaptureViewport}>
-          <div className="action-icon-wrap">
-            <Camera size={18} />
+        <div
+          className="action-card"
+          onClick={handleCaptureViewport}
+          title={`${t.actions.captureViewport} (${getDisplayShortcut('capture-screenshot')})`}
+        >
+          <div className="action-card-top">
+            <div className="action-icon-wrap">
+              <Camera size={18} />
+            </div>
+            <span className="action-shortcut-badge" title="Shortcut">
+              {getDisplayShortcut('capture-screenshot')}
+            </span>
           </div>
           <div className="action-title">{t.actions.captureViewport}</div>
         </div>
 
-        <div className="action-card" onClick={handleCaptureFullPage}>
-          <div className="action-icon-wrap">
-            <Layers size={18} />
+        <div
+          className="action-card"
+          onClick={handleCaptureFullPage}
+          title={`${t.actions.captureFullPage} (${getDisplayShortcut('capture-fullpage')})`}
+        >
+          <div className="action-card-top">
+            <div className="action-icon-wrap">
+              <Layers size={18} />
+            </div>
+            <span className="action-shortcut-badge" title="Shortcut">
+              {getDisplayShortcut('capture-fullpage')}
+            </span>
           </div>
           <div className="action-title">{t.actions.captureFullPage}</div>
         </div>

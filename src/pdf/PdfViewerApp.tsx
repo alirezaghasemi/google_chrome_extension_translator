@@ -15,16 +15,26 @@ import {
   Settings as SettingsIcon,
   RotateCcw,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Crop
 } from 'lucide-react';
 import { PdfLoader } from '../services/pdf/pdf-loader';
 import { pdfDocumentTranslator, PageTranslationResult } from '../services/pdf/pdf-translator-service';
 import { getPdfFileName } from '../services/pdf/pdf-utils';
 import { storageService } from '../services/storage/storage-service';
-import { SUPPORTED_LANGUAGES } from '../services/storage/defaults';
+import { SUPPORTED_LANGUAGES, DEFAULT_SETTINGS } from '../services/storage/defaults';
 import { ExtensionSettings } from '../types/settings';
+import { TranslationResult } from '../types/translation';
 import { geminiClient } from '../services/gemini/client';
-import { TermExplanation } from '../types/gemini';
+import { normalizeRect, NormalizedRect } from '../content/selection/coords';
+import {
+  cropCanvasRegion,
+  isMeaningfulPdfSelection,
+  createPdfTranslationResult,
+  calculatePdfPanelPosition,
+  mapDisplayRectToCanvasBitmap
+} from '../services/pdf/pdf-region';
+import { FloatingPanel } from '../content/overlays/FloatingPanel';
 
 export const PdfViewerApp: React.FC = () => {
   const [loader] = useState(() => new PdfLoader());
@@ -43,6 +53,7 @@ export const PdfViewerApp: React.FC = () => {
 
   // Translation State
   const [targetLang, setTargetLang] = useState('fa');
+  const isPersian = targetLang === 'fa';
   const [isTranslatingPage, setIsTranslatingPage] = useState(false);
   const [isTranslatingDoc, setIsTranslatingDoc] = useState(false);
   const [docProgress, setDocProgress] = useState(0);
@@ -57,20 +68,24 @@ export const PdfViewerApp: React.FC = () => {
   // Copied indicator
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
 
-  // Selection popup
-  const [selectionPopover, setSelectionPopover] = useState<{
-    text: string;
-    translation?: string;
-    explanations?: TermExplanation[];
-    x: number;
-    y: number;
-    loading: boolean;
-  } | null>(null);
+  // Region Selection State
+  const [isRegionSelecting, setIsRegionSelecting] = useState(false);
+  const [isDraggingRegion, setIsDraggingRegion] = useState(false);
+  const [currentRegionRect, setCurrentRegionRect] = useState<NormalizedRect | null>(null);
+  const [persistentRegionRect, setPersistentRegionRect] = useState<NormalizedRect | null>(null);
+  const [regionTranslating, setRegionTranslating] = useState(false);
+
+  // Floating Panels State (matching website mode)
+  const [activePanels, setActivePanels] = useState<TranslationResult[]>([]);
+  const [panelPositions, setPanelPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const currentRectRef = useRef<NormalizedRect | null>(null);
 
-  // Load initial settings
+  // Load initial settings and register region selection listener
   useEffect(() => {
     storageService.getSettings().then((s) => {
       setSettings(s);
@@ -86,14 +101,59 @@ export const PdfViewerApp: React.FC = () => {
       loadFromUrl(srcUrl);
     }
 
+    // Keyboard shortcut handler for Shift+2 / Escape
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (activePanels.length > 0) {
+          setActivePanels((prev) => prev.slice(0, -1));
+          if (activePanels.length <= 1) setPersistentRegionRect(null);
+        } else {
+          setIsRegionSelecting(false);
+          setIsDraggingRegion(false);
+          setCurrentRegionRect(null);
+        }
+        return;
+      }
+
+      if (e.shiftKey && (e.key === '2' || e.key === '@')) {
+        const activeEl = document.activeElement;
+        const isInput = activeEl?.tagName === 'INPUT' || activeEl?.tagName === 'TEXTAREA';
+        if (!isInput) {
+          e.preventDefault();
+          setIsRegionSelecting((prev) => !prev);
+        }
+      }
+    };
+
+    const handleRuntimeMessage = (message: { type?: string }, _sender: unknown, sendResponse: (res: unknown) => void) => {
+      if (message.type === 'START_REGION_SELECTION') {
+        setIsRegionSelecting(true);
+        sendResponse({ success: true });
+        return true;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    chrome.runtime?.onMessage?.addListener(handleRuntimeMessage);
+
     return () => {
       loader.destroy();
+      window.removeEventListener('keydown', handleKeyDown);
+      chrome.runtime?.onMessage?.removeListener(handleRuntimeMessage);
     };
   }, []);
 
   // Render canvas & load page paragraphs on page or zoom change
   useEffect(() => {
     if (!isLoaded || !canvasRef.current || currentPage < 1) return;
+
+    // Clear stale selections and drag state on page or zoom level changes
+    setPersistentRegionRect(null);
+    setCurrentRegionRect(null);
+    setIsDraggingRegion(false);
+    setIsRegionSelecting(false);
+    dragStartRef.current = null;
+    currentRectRef.current = null;
 
     let isSubscribed = true;
 
@@ -242,41 +302,186 @@ export const PdfViewerApp: React.FC = () => {
     URL.revokeObjectURL(blobUrl);
   };
 
+  // Region Selection mouse handlers on PDF Canvas
+  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    if (!isRegionSelecting || regionTranslating || !canvasRef.current) return;
+    if (e.button !== 0) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const canvasRect = canvasRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(canvasRect.width, e.clientX - canvasRect.left));
+    const y = Math.max(0, Math.min(canvasRect.height, e.clientY - canvasRect.top));
+
+    const initialRect = normalizeRect(x, y, x, y);
+    dragStartRef.current = { x, y };
+    currentRectRef.current = initialRect;
+    setCurrentRegionRect(initialRect);
+    setIsDraggingRegion(true);
+  };
+
+  useEffect(() => {
+    if (!isDraggingRegion) return;
+
+    const handleWindowMouseMove = (e: MouseEvent) => {
+      if (!canvasRef.current || !dragStartRef.current) return;
+
+      const canvasRect = canvasRef.current.getBoundingClientRect();
+      const currentX = Math.max(0, Math.min(canvasRect.width, e.clientX - canvasRect.left));
+      const currentY = Math.max(0, Math.min(canvasRect.height, e.clientY - canvasRect.top));
+
+      const rect = normalizeRect(dragStartRef.current.x, dragStartRef.current.y, currentX, currentY);
+      currentRectRef.current = rect;
+      setCurrentRegionRect(rect);
+    };
+
+    const handleWindowMouseUp = async (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      setIsDraggingRegion(false);
+      const selRect = currentRectRef.current;
+      const canvas = canvasRef.current;
+
+      if (!canvas || !selRect || !isMeaningfulPdfSelection(selRect, 10)) {
+        setCurrentRegionRect(null);
+        dragStartRef.current = null;
+        currentRectRef.current = null;
+        return;
+      }
+
+      const canvasRect = canvas.getBoundingClientRect();
+      const bitmapRect = mapDisplayRectToCanvasBitmap(
+        selRect,
+        { width: canvasRect.width, height: canvasRect.height },
+        canvas.width,
+        canvas.height
+      );
+
+      const cropped = cropCanvasRegion(canvas, bitmapRect);
+      if (!cropped) {
+        setCurrentRegionRect(null);
+        dragStartRef.current = null;
+        currentRectRef.current = null;
+        return;
+      }
+
+      try {
+        setRegionTranslating(true);
+        setIsRegionSelecting(false);
+        setPersistentRegionRect(selRect);
+        setCurrentRegionRect(null);
+        dragStartRef.current = null;
+        currentRectRef.current = null;
+
+        const res = await geminiClient.translateRegionImage(cropped, {
+          targetLanguage: targetLang
+        });
+
+        const effectiveSettings = settings || DEFAULT_SETTINGS;
+        const newResult = createPdfTranslationResult(res, {
+          sourceTextFallback: isPersian ? '[ناحیه تصویری PDF]' : '[PDF Visual Region]',
+          isVisual: true,
+          targetLanguageFallback: targetLang
+        });
+
+        const initialPos = calculatePdfPanelPosition(
+          {
+            left: selRect.left + canvasRect.left,
+            top: selRect.top + canvasRect.top,
+            width: selRect.width,
+            height: selRect.height,
+            right: selRect.right + canvasRect.left,
+            bottom: selRect.bottom + canvasRect.top
+          },
+          effectiveSettings.panelWidth || 420,
+          Math.min(effectiveSettings.panelMaxHeight || 520, window.innerHeight - 48),
+          window.innerWidth,
+          window.innerHeight
+        );
+
+        setPanelPositions((prev) => new Map(prev).set(newResult.id, initialPos));
+        setActivePanels((prev) => [...prev, newResult]);
+      } catch (err: unknown) {
+        const error = err as Error;
+        alert(`خطا در ترجمه ناحیه: ${error.message}`);
+      } finally {
+        setRegionTranslating(false);
+      }
+    };
+
+    window.addEventListener('mousemove', handleWindowMouseMove);
+    window.addEventListener('mouseup', handleWindowMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleWindowMouseMove);
+      window.removeEventListener('mouseup', handleWindowMouseUp);
+    };
+  }, [isDraggingRegion, targetLang, settings, isPersian]);
+
+  const handleRetranslatePanel = async (res: TranslationResult) => {
+    try {
+      const updated = await geminiClient.translateRegionText(res.sourceText, {
+        targetLanguage: res.targetLanguage
+      });
+      setActivePanels((prev) =>
+        prev.map((r) =>
+          r.id === res.id
+            ? {
+                ...r,
+                translatedText: updated.translation,
+                explanations: updated.explanations || [],
+                timestamp: Date.now()
+              }
+            : r
+        )
+      );
+    } catch (err) {
+      console.error('Retranslate panel error:', err);
+    }
+  };
+
   // Handle text selection in translated column or canvas
   const handleMouseUp = async (e: React.MouseEvent) => {
+    if (isRegionSelecting || isDraggingRegion) return;
     const sel = window.getSelection();
     const text = sel?.toString().trim();
     if (text && text.length > 2 && text.length < 500) {
       const rect = sel?.getRangeAt(0).getBoundingClientRect();
-      const x = rect ? rect.left + window.scrollX : e.clientX;
-      const y = rect ? rect.bottom + window.scrollY + 8 : e.clientY + 8;
-
-      setSelectionPopover({
-        text,
-        x: Math.min(x, window.innerWidth - 380),
-        y,
-        loading: true
-      });
+      const x = rect ? rect.right + 16 : e.clientX + 16;
+      const y = rect ? rect.top : e.clientY;
 
       try {
         const res = await geminiClient.translateRegionText(text, { targetLanguage: targetLang });
-        setSelectionPopover((prev) =>
-          prev && prev.text === text
-            ? {
-                ...prev,
-                translation: res.translation,
-                explanations: res.explanations,
-                loading: false
-              }
-            : prev
+        const effectiveSettings = settings || DEFAULT_SETTINGS;
+        const newResult = createPdfTranslationResult(
+          {
+            translation: res.translation,
+            detectedText: text,
+            sourceLanguage: res.sourceLanguage,
+            targetLanguage: res.targetLanguage,
+            explanations: res.explanations
+          },
+          {
+            sourceTextFallback: text,
+            isVisual: false,
+            targetLanguageFallback: targetLang
+          }
         );
-      } catch {
-        setSelectionPopover(null);
+
+        const clampedPos = {
+          x: Math.max(16, Math.min(window.innerWidth - (effectiveSettings.panelWidth || 420) - 16, x)),
+          y: Math.max(16, Math.min(window.innerHeight - 300, y))
+        };
+
+        setPanelPositions((prev) => new Map(prev).set(newResult.id, clampedPos));
+        setActivePanels((prev) => [...prev, newResult]);
+      } catch (err) {
+        console.error('Failed to translate selected text:', err);
       }
     }
   };
-
-  const isPersian = targetLang === 'fa';
 
   return (
     <div className="pdf-app-container" onMouseUp={handleMouseUp}>
@@ -395,9 +600,52 @@ export const PdfViewerApp: React.FC = () => {
           {isLoaded && (
             <>
               <button
+                className="pdf-btn"
+                style={
+                  isRegionSelecting
+                    ? {
+                        background: 'linear-gradient(135deg, #2563eb, #4f46e5)',
+                        borderColor: '#60a5fa',
+                        color: '#ffffff',
+                        boxShadow: '0 0 12px rgba(59, 130, 246, 0.5)'
+                      }
+                    : {}
+                }
+                onClick={() => {
+                  setIsRegionSelecting((prev) => !prev);
+                  setPersistentRegionRect(null);
+                }}
+                disabled={isTranslatingPage || isTranslatingDoc || regionTranslating}
+                title="Select region on PDF page to translate (Shift+2)"
+              >
+                {regionTranslating ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    <span>Translating...</span>
+                  </>
+                ) : (
+                  <>
+                    <Crop size={14} />
+                    <span>Select Region</span>
+                    <span
+                      style={{
+                        fontSize: '10px',
+                        background: 'rgba(255, 255, 255, 0.2)',
+                        padding: '1px 5px',
+                        borderRadius: '4px',
+                        fontWeight: 600
+                      }}
+                    >
+                      Shift+2
+                    </span>
+                  </>
+                )}
+              </button>
+
+              <button
                 className="pdf-btn pdf-btn-primary"
                 onClick={handleTranslateCurrentPage}
-                disabled={isTranslatingPage || isTranslatingDoc}
+                disabled={isTranslatingPage || isTranslatingDoc || isRegionSelecting}
               >
                 {isTranslatingPage ? (
                   <>
@@ -516,8 +764,98 @@ export const PdfViewerApp: React.FC = () => {
           <div className="pdf-viewer-split">
             {/* Left Column: Original PDF Page Canvas */}
             <section className="pdf-canvas-column">
-              <div className="pdf-canvas-wrapper">
+              {isRegionSelecting && (
+                <div
+                  style={{
+                    position: 'sticky',
+                    top: 0,
+                    zIndex: 40,
+                    marginBottom: 12,
+                    background: 'rgba(37, 99, 235, 0.9)',
+                    backdropFilter: 'blur(8px)',
+                    color: '#ffffff',
+                    padding: '8px 16px',
+                    borderRadius: 8,
+                    fontSize: '13px',
+                    fontWeight: 500,
+                    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8
+                  }}
+                >
+                  <Crop size={16} />
+                  <span>
+                    {isPersian
+                      ? 'با ماوس کادری دور متن یا ناحیه مورد نظر بکشید (کلید Esc برای لغو)'
+                      : 'Drag a box around any text or image area to translate (Esc to cancel)'}
+                  </span>
+                </div>
+              )}
+
+              <div
+                className={`pdf-canvas-wrapper ${isRegionSelecting ? 'selecting' : ''}`}
+                ref={canvasWrapperRef}
+                style={{
+                  cursor: isRegionSelecting ? 'crosshair' : 'default',
+                  position: 'relative',
+                  userSelect: isRegionSelecting ? 'none' : 'auto'
+                }}
+                onMouseDown={handleCanvasMouseDown}
+              >
                 <canvas ref={canvasRef} />
+
+                {/* Selection crop box */}
+                {isRegionSelecting && isDraggingRegion && currentRegionRect && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: `${currentRegionRect.left}px`,
+                      top: `${currentRegionRect.top}px`,
+                      width: `${currentRegionRect.width}px`,
+                      height: `${currentRegionRect.height}px`,
+                      border: '2px solid #3b82f6',
+                      background: 'rgba(59, 130, 246, 0.15)',
+                      boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.45)',
+                      pointerEvents: 'none',
+                      zIndex: 30
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: 'absolute',
+                        bottom: '-22px',
+                        right: 0,
+                        background: '#1e293b',
+                        color: '#93c5fd',
+                        border: '1px solid #3b82f6',
+                        borderRadius: '4px',
+                        padding: '1px 5px',
+                        fontSize: '10px',
+                        fontFamily: 'monospace',
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      {Math.round(currentRegionRect.width)} × {Math.round(currentRegionRect.height)}
+                    </div>
+                  </div>
+                )}
+
+                {/* Persistent selection box */}
+                {persistentRegionRect && (
+                  <div
+                    className="persistent-selection-box"
+                    style={{
+                      position: 'absolute',
+                      left: `${persistentRegionRect.left}px`,
+                      top: `${persistentRegionRect.top}px`,
+                      width: `${persistentRegionRect.width}px`,
+                      height: `${persistentRegionRect.height}px`,
+                      pointerEvents: 'none',
+                      zIndex: 25
+                    }}
+                  />
+                )}
               </div>
             </section>
 
@@ -587,58 +925,28 @@ export const PdfViewerApp: React.FC = () => {
         )}
       </main>
 
-      {/* Floating Selection Quick Translate Popover */}
-      {selectionPopover && (
-        <div
-          className="pdf-selection-popover"
-          style={{ left: selectionPopover.x, top: selectionPopover.y }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <span style={{ fontSize: '11px', fontWeight: 600, color: '#93c5fd', display: 'flex', alignItems: 'center', gap: 4 }}>
-              <Sparkles size={12} /> Selection Translation
-            </span>
-            <button
-              onClick={() => setSelectionPopover(null)}
-              style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '14px' }}
-            >
-              ×
-            </button>
-          </div>
+      {/* Floating Panels (matching website mode) */}
+      {activePanels.map((result) => {
+        const effectiveSettings = settings || DEFAULT_SETTINGS;
+        const initialPos = panelPositions.get(result.id) || { x: 50, y: 50 };
 
-          <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: 6, maxHeight: 60, overflowY: 'auto' }}>
-            {selectionPopover.text}
-          </div>
-
-          {selectionPopover.loading ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#60a5fa', fontSize: '12px' }}>
-              <Loader2 size={14} className="animate-spin" /> Translating...
-            </div>
-          ) : (
-            <div
-              style={{
-                fontSize: '13px',
-                color: '#f8fafc',
-                lineHeight: 1.6,
-                direction: isPersian ? 'rtl' : 'ltr',
-                textAlign: isPersian ? 'right' : 'left'
-              }}
-            >
-              {selectionPopover.translation}
-            </div>
-          )}
-
-          {selectionPopover.explanations && selectionPopover.explanations.length > 0 && (
-            <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #334155' }}>
-              {selectionPopover.explanations.map((exp, i) => (
-                <div key={i} className="pdf-term-badge" title={exp.meaning}>
-                  <strong>{exp.term}:</strong> {exp.meaning}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+        return (
+          <FloatingPanel
+            key={result.id}
+            result={result}
+            settings={effectiveSettings}
+            initialPosition={initialPos}
+            onClose={(id) => {
+              setActivePanels((prev) => prev.filter((r) => r.id !== id));
+              if (activePanels.length <= 1) setPersistentRegionRect(null);
+            }}
+            onPositionChange={(pos) => {
+              setPanelPositions((prev) => new Map(prev).set(result.id, pos));
+            }}
+            onRetranslate={handleRetranslatePanel}
+          />
+        );
+      })}
     </div>
   );
 };

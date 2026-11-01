@@ -69,5 +69,26 @@ describe('PDF Utils', () => {
       expect(paragraphs.length).toBe(1);
       expect(paragraphs[0]).toBe('Valid text.');
     });
+
+    it('should correctly order and reconstruct text items that arrive out-of-order from PDF stream', () => {
+      // PDF stream has footnote/lower paragraph first, then heading/top paragraph
+      const scrambledItems = [
+        // Paragraph 2 (lower on page, y = 50)
+        { str: 'Paragraph two line one.', x: 20, y: 50 },
+        { str: 'Paragraph two line two.', x: 20, y: 35 },
+        // Paragraph 1 (top of page, y = 200)
+        { str: 'Second half of title line.', x: 120, y: 200 },
+        { str: 'First half of title line. ', x: 20, y: 200 },
+        { str: 'Paragraph one body sentence.', x: 20, y: 180 }
+      ];
+
+      const paragraphs = reconstructPdfParagraphs(scrambledItems);
+      expect(paragraphs.length).toBe(2);
+      expect(paragraphs[0]).toContain('First half of title line.');
+      expect(paragraphs[0]).toContain('Second half of title line.');
+      expect(paragraphs[0]).toContain('Paragraph one body sentence.');
+      expect(paragraphs[1]).toContain('Paragraph two line one.');
+      expect(paragraphs[1]).toContain('Paragraph two line two.');
+    });
   });
 });

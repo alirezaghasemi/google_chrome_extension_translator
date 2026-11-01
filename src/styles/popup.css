@@ -43,7 +43,8 @@ body {
   overflow-x: hidden;
 }
 
-body.rtl {
+body.rtl,
+.popup-container.rtl {
   direction: rtl;
   text-align: right;
 }
@@ -150,15 +151,16 @@ body.rtl {
   padding: 12px;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 8px;
   cursor: pointer;
   transition: all 0.2s ease;
   text-align: left;
+  position: relative;
 }
 
-body.rtl .action-card {
-  align-items: flex-start;
+body.rtl .action-card,
+.popup-container.rtl .action-card {
   text-align: right;
 }
 
@@ -172,6 +174,36 @@ body.rtl .action-card {
   transform: translateY(0);
 }
 
+.action-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.action-shortcut-badge {
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: rgba(100, 116, 139, 0.1);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 5px;
+  line-height: 1.2;
+  letter-spacing: -0.2px;
+  user-select: none;
+  direction: ltr;
+  display: inline-block;
+  transition: all 0.2s ease;
+}
+
+.action-card:hover .action-shortcut-badge {
+  color: var(--primary);
+  border-color: rgba(37, 99, 235, 0.35);
+  background: var(--primary-light);
+}
+
 .action-icon-wrap {
   width: 32px;
   height: 32px;
@@ -181,6 +213,7 @@ body.rtl .action-card {
   justify-content: center;
   background: var(--primary-light);
   color: var(--primary);
+  flex-shrink: 0;
 }
 
 .action-title {
