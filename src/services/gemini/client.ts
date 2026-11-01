@@ -180,9 +180,11 @@ export class GeminiClient {
 
           const isInvalidKey =
             err.code === 'INVALID_API_KEY' ||
-            err.httpStatus === 400 ||
             err.httpStatus === 401 ||
-            err.httpStatus === 403;
+            err.httpStatus === 403 ||
+            (err.httpStatus === 400 &&
+              (err.message.toLowerCase().includes('key') ||
+                err.message.toLowerCase().includes('api_key')));
 
           if (isRateLimit) {
             this.keyPool.markRateLimited(activeKey);
@@ -306,13 +308,14 @@ export class GeminiClient {
     const targetLang = options?.targetLanguage || settings.targetLanguage;
     const expLevel = options?.explanationLevel || (settings.explainTerms ? settings.explanationLevel : 'none');
     const style = options?.style || settings.translationStyle;
+    const model = settings.geminiModel === 'gemini-2.5-flash' ? 'gemini-3.8-flash' : (settings.geminiModel || 'gemini-3.8-flash');
 
     // Clean data URL prefix if present (e.g. "data:image/png;base64,")
     const cleanBase64 = base64Png.replace(/^data:image\/\w+;base64,/, '');
 
     const prompt = createMultimodalTranslationPrompt(targetLang, expLevel, style);
 
-    const payload: GeminiRequestPayload = {
+    const payloadWithSchema: GeminiRequestPayload = {
       contents: [
         {
           role: 'user',
@@ -334,18 +337,84 @@ export class GeminiClient {
       }
     };
 
-    const rawResponse = await this.executeRequest(
-      settings.geminiModel,
-      payload,
-      settings.requestTimeout
-    );
+    try {
+      const rawResponse = await this.executeRequest(
+        model,
+        payloadWithSchema,
+        settings.requestTimeout
+      );
 
-    return this.parseJsonSafe<StructuredTranslationPayload>(rawResponse, (raw) => ({
-      sourceLanguage: 'auto',
-      targetLanguage: targetLang,
-      translation: raw,
-      explanations: []
-    }));
+      return this.parseJsonSafe<StructuredTranslationPayload>(rawResponse, (raw) => ({
+        sourceLanguage: 'auto',
+        targetLanguage: targetLang,
+        translation: raw,
+        explanations: []
+      }));
+    } catch (err: unknown) {
+      console.warn('[GeminiClient] Multimodal translation with responseSchema failed. Retrying in JSON mode...', err);
+
+      // Fallback 1: Send with responseMimeType: 'application/json' but without responseSchema
+      const promptWithJsonGuide = `${prompt}\n\nIMPORTANT: Respond ONLY with a valid JSON object matching:\n{\n  "sourceLanguage": "en",\n  "targetLanguage": "${targetLang}",\n  "detectedText": "extracted source text",\n  "translation": "translated text",\n  "explanations": []\n}`;
+
+      const fallbackPayload: GeminiRequestPayload = {
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { text: promptWithJsonGuide },
+              {
+                inlineData: {
+                  mimeType: 'image/png',
+                  data: cleanBase64
+                }
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          temperature: settings.temperature,
+          responseMimeType: 'application/json'
+        }
+      };
+
+      try {
+        const rawResponse = await this.executeRequest(
+          model,
+          fallbackPayload,
+          settings.requestTimeout
+        );
+
+        return this.parseJsonSafe<StructuredTranslationPayload>(rawResponse, (raw) => ({
+          sourceLanguage: 'auto',
+          targetLanguage: targetLang,
+          translation: raw,
+          explanations: []
+        }));
+      } catch (fallbackErr: unknown) {
+        console.warn('[GeminiClient] JSON mode also failed. Retrying in plain text prompt mode...', fallbackErr);
+
+        // Fallback 2: Send plain request without generationConfig mime/schema
+        const plainPayload: GeminiRequestPayload = {
+          contents: fallbackPayload.contents,
+          generationConfig: {
+            temperature: settings.temperature
+          }
+        };
+
+        const rawResponse = await this.executeRequest(
+          model,
+          plainPayload,
+          settings.requestTimeout
+        );
+
+        return this.parseJsonSafe<StructuredTranslationPayload>(rawResponse, (raw) => ({
+          sourceLanguage: 'auto',
+          targetLanguage: targetLang,
+          translation: raw,
+          explanations: []
+        }));
+      }
+    }
   }
 
   /**

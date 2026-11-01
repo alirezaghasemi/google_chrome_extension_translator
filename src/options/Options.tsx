@@ -65,6 +65,9 @@ export const Options: React.FC = () => {
   const handleSaveApiKey = async () => {
     const keys = parseApiKeys(apiKeyInput);
     await storageService.setApiKey(keys.join('\n'));
+    if (settings.geminiModel === 'gemini-2.5-flash' || !settings.geminiModel) {
+      await storageService.saveSettings({ geminiModel: 'gemini-3.8-flash' });
+    }
     setApiKeyInput(keys.join('\n'));
     const updated = await storageService.getSettings();
     setSettings(updated);

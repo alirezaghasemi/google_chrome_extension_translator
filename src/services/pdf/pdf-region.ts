@@ -13,6 +13,107 @@ export interface SizeBounds {
   height: number;
 }
 
+export interface ImageCropDimensions {
+  naturalWidth: number;
+  naturalHeight: number;
+  clientWidth: number;
+  clientHeight: number;
+}
+
+export interface SafeCropBounds {
+  cropLeft: number;
+  cropTop: number;
+  cropWidth: number;
+  cropHeight: number;
+}
+
+/**
+ * Safely computes crop rectangle from viewport selection and image dimensions,
+ * guarding against 0-dimension images, division-by-zero, and out-of-bound coordinates.
+ */
+export function calculateSafeCropBounds(
+  selection: NormalizedRect,
+  imageDims: ImageCropDimensions,
+  minDimension = 10
+): SafeCropBounds | null {
+  if (!selection || selection.width < minDimension || selection.height < minDimension) {
+    return null;
+  }
+
+  const { naturalWidth, naturalHeight } = imageDims;
+  if (!naturalWidth || !naturalHeight || naturalWidth <= 0 || naturalHeight <= 0) {
+    return null;
+  }
+
+  const clientWidth = imageDims.clientWidth > 0 ? imageDims.clientWidth : naturalWidth;
+  const clientHeight = imageDims.clientHeight > 0 ? imageDims.clientHeight : naturalHeight;
+
+  let scaleX = naturalWidth / clientWidth;
+  let scaleY = naturalHeight / clientHeight;
+
+  if (!Number.isFinite(scaleX) || scaleX <= 0) scaleX = 1;
+  if (!Number.isFinite(scaleY) || scaleY <= 0) scaleY = 1;
+
+  const clamped = clampRectToBounds(selection, {
+    width: clientWidth,
+    height: clientHeight
+  });
+
+  const cropLeft = Math.max(0, Math.min(naturalWidth - 1, Math.round(clamped.left * scaleX)));
+  const cropTop = Math.max(0, Math.min(naturalHeight - 1, Math.round(clamped.top * scaleY)));
+  const cropWidth = Math.max(1, Math.min(naturalWidth - cropLeft, Math.round(clamped.width * scaleX)));
+  const cropHeight = Math.max(1, Math.min(naturalHeight - cropTop, Math.round(clamped.height * scaleY)));
+
+  if (cropWidth < 5 || cropHeight < 5) {
+    return null;
+  }
+
+  return {
+    cropLeft,
+    cropTop,
+    cropWidth,
+    cropHeight
+  };
+}
+
+/**
+ * Formats API errors and exceptions into clear, actionable Persian messages.
+ */
+export function formatSnipErrorMessage(err: unknown): string {
+  if (!err) return 'خطای نامشخص در ترجمه ناحیه تصویری.';
+
+  const error = err as { code?: string; httpStatus?: number; message?: string };
+  const msg = (error.message || '').toLowerCase();
+  const code = error.code || '';
+  const status = error.httpStatus;
+
+  if (code === 'MISSING_API_KEY' || msg.includes('api key is not configured') || msg.includes('missing api key')) {
+    return 'کلید API جمینای تنظیم نشده است. لطفاً از بخش تنظیمات کلید خود را وارد کنید.';
+  }
+
+  if (code === 'RATE_LIMIT_EXCEEDED' || status === 429 || msg.includes('rate limit') || msg.includes('quota')) {
+    return 'محدودیت تعداد درخواست جمینای (Rate Limit). لطفاً کمی صبر کنید یا در بخش تنظیمات کلیدهای بیشتری اضافه کنید.';
+  }
+
+  if (code === 'INVALID_API_KEY' || status === 401 || status === 403 || msg.includes('key not valid') || msg.includes('api key invalid')) {
+    return 'کلید API وارد شده معتبر نیست یا منقضی شده است. لطفاً کلیدهای خود را در تنظیمات بررسی کنید.';
+  }
+
+  if (status === 404 || msg.includes('no longer available') || msg.includes('not found')) {
+    return 'مدل قبلی منقضی شده است و به gemini-3.8-flash تغییر یافت. لطفاً مجدداً امتحان کنید.';
+  }
+
+  if (code === 'SAFETY_BLOCKED' || msg.includes('safety')) {
+    return 'محتوای انتخابی توسط فیلترهای ایمنی جمینای مسدود شد.';
+  }
+
+  if (code === 'TIMEOUT' || msg.includes('timeout')) {
+    return 'زمان اتصال به جمینای به پایان رسید (Timeout). لطفاً اتصال اینترنت خود را بررسی کنید.';
+  }
+
+  return error.message || 'خطا در ترجمه تصویر انتخابی.';
+}
+
 /**
  * Clamps a selection rectangle within the bounding dimensions.
  */

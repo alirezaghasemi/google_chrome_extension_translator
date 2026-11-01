@@ -1,10 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Crop,
   X,
   Loader2,
   Languages,
-  BookOpen
+  BookOpen,
+  Settings as SettingsIcon,
+  AlertCircle
 } from 'lucide-react';
 import { storageService } from '../services/storage/storage-service';
 import { SUPPORTED_LANGUAGES, DEFAULT_SETTINGS } from '../services/storage/defaults';
@@ -13,10 +15,10 @@ import { ExtensionSettings } from '../types/settings';
 import { TranslationResult } from '../types/translation';
 import { normalizeRect, NormalizedRect } from '../content/selection/coords';
 import {
-  isMeaningfulPdfSelection,
-  clampRectToBounds,
   createPdfTranslationResult,
-  calculatePdfPanelPosition
+  calculatePdfPanelPosition,
+  calculateSafeCropBounds,
+  formatSnipErrorMessage
 } from '../services/pdf/pdf-region';
 import { FloatingPanel } from '../content/overlays/FloatingPanel';
 
@@ -109,6 +111,16 @@ export const SnipApp: React.FC = () => {
     setCurrentRect(norm);
   };
 
+  const handlePositionChange = useCallback((id: string, pos: { x: number; y: number }) => {
+    setPanelPositions((prev) => {
+      const existing = prev.get(id);
+      if (existing && Math.abs(existing.x - pos.x) < 2 && Math.abs(existing.y - pos.y) < 2) {
+        return prev;
+      }
+      return new Map(prev).set(id, pos);
+    });
+  }, []);
+
   const handleMouseUp = async () => {
     if (!isSelecting || !currentRect) {
       setIsSelecting(false);
@@ -117,32 +129,27 @@ export const SnipApp: React.FC = () => {
 
     setIsSelecting(false);
 
-    if (!isMeaningfulPdfSelection(currentRect, 15)) {
+    const img = imageRef.current;
+    if (!img) return;
+
+    const cropBounds = calculateSafeCropBounds(
+      currentRect,
+      {
+        naturalWidth: img.naturalWidth,
+        naturalHeight: img.naturalHeight,
+        clientWidth: img.clientWidth,
+        clientHeight: img.clientHeight
+      },
+      15
+    );
+
+    if (!cropBounds) {
       setCurrentRect(null);
       setDragStart(null);
       return;
     }
 
-    const img = imageRef.current;
-    if (!img) return;
-
     setPersistentRect(currentRect);
-
-    // Clamp coordinates to image natural dimensions
-    const scaleX = img.naturalWidth / img.clientWidth;
-    const scaleY = img.naturalHeight / img.clientHeight;
-
-    const clamped = clampRectToBounds(currentRect, {
-      width: img.clientWidth,
-      height: img.clientHeight
-    });
-
-    const cropLeft = Math.round(clamped.left * scaleX);
-    const cropTop = Math.round(clamped.top * scaleY);
-    const cropWidth = Math.round(clamped.width * scaleX);
-    const cropHeight = Math.round(clamped.height * scaleY);
-
-    if (cropWidth <= 0 || cropHeight <= 0) return;
 
     try {
       setIsLoading(true);
@@ -150,22 +157,22 @@ export const SnipApp: React.FC = () => {
 
       // Crop image onto offscreen canvas
       const offscreen = document.createElement('canvas');
-      offscreen.width = cropWidth;
-      offscreen.height = cropHeight;
+      offscreen.width = cropBounds.cropWidth;
+      offscreen.height = cropBounds.cropHeight;
       const ctx = offscreen.getContext('2d');
 
       if (!ctx) throw new Error('Could not create canvas context');
 
       ctx.drawImage(
         img,
-        cropLeft,
-        cropTop,
-        cropWidth,
-        cropHeight,
+        cropBounds.cropLeft,
+        cropBounds.cropTop,
+        cropBounds.cropWidth,
+        cropBounds.cropHeight,
         0,
         0,
-        cropWidth,
-        cropHeight
+        cropBounds.cropWidth,
+        cropBounds.cropHeight
       );
 
       const croppedDataUrl = offscreen.toDataURL('image/png');
@@ -194,9 +201,9 @@ export const SnipApp: React.FC = () => {
       setActiveResults((prev) => [...prev, newResult]);
       setCurrentRect(null);
     } catch (err: unknown) {
-      const error = err as Error;
-      console.error('Snip translation error:', error);
-      setErrorMsg(error.message || 'خطا در ترجمه تصویر');
+      console.error('Snip translation error:', err);
+      const friendlyMsg = formatSnipErrorMessage(err);
+      setErrorMsg(friendlyMsg);
     } finally {
       setIsLoading(false);
     }
@@ -299,6 +306,15 @@ export const SnipApp: React.FC = () => {
         )}
 
         <button
+          className="snip-hud-btn"
+          onClick={() => chrome.runtime.openOptionsPage()}
+          title="تنظیمات افزونه و کلیدهای API"
+        >
+          <SettingsIcon size={13} />
+          <span>تنظیمات</span>
+        </button>
+
+        <button
           className="snip-hud-btn close"
           onClick={() => window.close()}
           title="بستن (Esc)"
@@ -383,15 +399,54 @@ export const SnipApp: React.FC = () => {
             top: '72px',
             left: '50%',
             transform: 'translateX(-50%)',
-            background: 'rgba(239, 68, 68, 0.9)',
+            background: 'rgba(185, 28, 28, 0.95)',
             color: '#fff',
-            padding: '8px 16px',
-            borderRadius: '20px',
+            padding: '10px 18px',
+            borderRadius: '24px',
             fontSize: '13px',
-            zIndex: 2000
+            zIndex: 2000,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35)',
+            maxWidth: '90vw'
           }}
         >
-          {errorMsg}
+          <AlertCircle size={16} />
+          <span>{errorMsg}</span>
+          {(errorMsg.includes('تنظیمات') || errorMsg.includes('کلید API')) && (
+            <button
+              onClick={() => chrome.runtime.openOptionsPage()}
+              style={{
+                background: '#fff',
+                color: '#b91c1c',
+                border: 'none',
+                padding: '4px 10px',
+                borderRadius: '12px',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                marginRight: '6px'
+              }}
+            >
+              باز کردن تنظیمات
+            </button>
+          )}
+          <button
+            onClick={() => setErrorMsg(null)}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'rgba(255, 255, 255, 0.8)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              padding: '2px'
+            }}
+            title="بستن پیام"
+          >
+            <X size={14} />
+          </button>
         </div>
       )}
 
@@ -410,9 +465,7 @@ export const SnipApp: React.FC = () => {
               setActiveResults((prev) => prev.filter((r) => r.id !== id));
               if (activeResults.length <= 1) setPersistentRect(null);
             }}
-            onPositionChange={(pos) => {
-              setPanelPositions((prev) => new Map(prev).set(result.id, pos));
-            }}
+            onPositionChange={(pos) => handlePositionChange(result.id, pos)}
             onRetranslate={handleRetranslate}
           />
         );

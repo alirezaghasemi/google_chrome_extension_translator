@@ -40,6 +40,10 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
   const [copied, setCopied] = useState(false);
 
   const panelRef = useRef<HTMLDivElement>(null);
+  const onPositionChangeRef = useRef(onPositionChange);
+  useEffect(() => {
+    onPositionChangeRef.current = onPositionChange;
+  }, [onPositionChange]);
   const t = getI18n(settings.uiLanguage);
   const rtl = isRtl(result.targetLanguage || settings.targetLanguage);
 
@@ -64,41 +68,44 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
 
     const adjustPosition = () => {
       if (isDragging) return;
-      const rect = el.getBoundingClientRect();
+      const currentEl = panelRef.current;
+      if (!currentEl) return;
+
+      const rect = currentEl.getBoundingClientRect();
       const pad = 16;
-      let needsUpdate = false;
-      let nextX = position.x;
-      let nextY = position.y;
 
-      // Check bottom overflow
-      if (rect.bottom > window.innerHeight - pad) {
-        nextY = Math.max(pad, window.innerHeight - rect.height - pad);
-        needsUpdate = true;
-      }
-      // Check top overflow
-      if (nextY < pad) {
-        nextY = pad;
-        needsUpdate = true;
-      }
-      // Check right overflow
-      if (rect.right > window.innerWidth - pad) {
-        nextX = Math.max(pad, window.innerWidth - rect.width - pad);
-        needsUpdate = true;
-      }
-      // Check left overflow
-      if (nextX < pad) {
-        nextX = pad;
-        needsUpdate = true;
-      }
+      setPosition((prev) => {
+        let nextX = prev.x;
+        let nextY = prev.y;
 
-      if (needsUpdate) {
-        const adjusted = { x: nextX, y: nextY };
-        setPosition(adjusted);
-        onPositionChange(adjusted);
-      }
+        // Check bottom overflow
+        if (rect.bottom > window.innerHeight - pad) {
+          nextY = Math.max(pad, window.innerHeight - rect.height - pad);
+        }
+        // Check top overflow
+        if (nextY < pad) {
+          nextY = pad;
+        }
+        // Check right overflow
+        if (rect.right > window.innerWidth - pad) {
+          nextX = Math.max(pad, window.innerWidth - rect.width - pad);
+        }
+        // Check left overflow
+        if (nextX < pad) {
+          nextX = pad;
+        }
+
+        // Only update if difference exceeds 4px to avoid subpixel infinite feedback loops (React error 310)
+        if (Math.abs(nextX - prev.x) > 4 || Math.abs(nextY - prev.y) > 4) {
+          const adjusted = { x: Math.round(nextX), y: Math.round(nextY) };
+          onPositionChangeRef.current?.(adjusted);
+          return adjusted;
+        }
+        return prev;
+      });
     };
 
-    adjustPosition();
+    const rafId = requestAnimationFrame(adjustPosition);
 
     let resizeObserver: ResizeObserver | null = null;
     if (typeof ResizeObserver !== 'undefined') {
@@ -110,10 +117,11 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
 
     window.addEventListener('resize', adjustPosition);
     return () => {
+      cancelAnimationFrame(rafId);
       if (resizeObserver) resizeObserver.disconnect();
       window.removeEventListener('resize', adjustPosition);
     };
-  }, [isDragging, showExplanations, isMinimized, result.translatedText, result.explanations, onPositionChange]);
+  }, [isDragging, showExplanations, isMinimized, result.translatedText, result.explanations]);
 
   // Drag listeners
   useEffect(() => {
