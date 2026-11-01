@@ -1,5 +1,6 @@
 import { ExtensionSettings, StoredSettings } from '../../types/settings';
 import { DEFAULT_SETTINGS } from './defaults';
+import { parseApiKeys } from '../gemini/key-manager';
 
 const STORAGE_KEY = 'antigravity_ai_settings';
 
@@ -59,6 +60,9 @@ export class StorageService {
         const result = await chrome.storage.local.get(STORAGE_KEY);
         const stored = (result[STORAGE_KEY] || {}) as StoredSettings;
         const merged: ExtensionSettings = { ...DEFAULT_SETTINGS, ...stored };
+        if (merged.geminiModel === 'gemini-2.5-flash') {
+          merged.geminiModel = 'gemini-3.8-flash';
+        }
         this.memoryCache = merged;
         return merged;
       } else if (typeof localStorage !== 'undefined') {
@@ -66,6 +70,9 @@ export class StorageService {
         const raw = localStorage.getItem(STORAGE_KEY);
         const stored = raw ? (JSON.parse(raw) as StoredSettings) : {};
         const merged: ExtensionSettings = { ...DEFAULT_SETTINGS, ...stored };
+        if (merged.geminiModel === 'gemini-2.5-flash') {
+          merged.geminiModel = 'gemini-3.8-flash';
+        }
         this.memoryCache = merged;
         return merged;
       }
@@ -101,12 +108,25 @@ export class StorageService {
     return settings.geminiApiKey || '';
   }
 
+  public async getApiKeys(): Promise<string[]> {
+    const settings = await this.getSettings();
+    return parseApiKeys(
+      settings.geminiApiKeys && settings.geminiApiKeys.length > 0
+        ? settings.geminiApiKeys
+        : settings.geminiApiKey
+    );
+  }
+
   public async setApiKey(apiKey: string): Promise<void> {
-    await this.saveSettings({ geminiApiKey: apiKey.trim() });
+    const keys = parseApiKeys(apiKey);
+    await this.saveSettings({
+      geminiApiKey: keys.join('\n'),
+      geminiApiKeys: keys
+    });
   }
 
   public async deleteApiKey(): Promise<void> {
-    await this.saveSettings({ geminiApiKey: '' });
+    await this.saveSettings({ geminiApiKey: '', geminiApiKeys: [] });
   }
 }
 

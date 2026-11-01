@@ -27,6 +27,7 @@ import {
   Keyboard
 } from 'lucide-react';
 import { getDisplayShortcut } from '../utils/shortcuts';
+import { parseApiKeys } from '../services/gemini/key-manager';
 
 type SettingsTab = 'ai' | 'general' | 'translation' | 'panel' | 'screenshot' | 'privacy';
 
@@ -62,42 +63,55 @@ export const Options: React.FC = () => {
   };
 
   const handleSaveApiKey = async () => {
-    await handleUpdate('geminiApiKey', apiKeyInput.trim());
+    const keys = parseApiKeys(apiKeyInput);
+    await storageService.setApiKey(keys.join('\n'));
+    setApiKeyInput(keys.join('\n'));
+    const updated = await storageService.getSettings();
+    setSettings(updated);
+    setSaveFeedback(true);
+    setTimeout(() => setSaveFeedback(false), 2000);
   };
 
   const handleDeleteApiKey = async () => {
-    if (confirm('Are you sure you want to delete your stored Gemini API key?')) {
+    if (confirm('Are you sure you want to delete your stored Gemini API key(s)?')) {
       await storageService.deleteApiKey();
       setApiKeyInput('');
-      setSettings((s) => (s ? { ...s, geminiApiKey: '' } : null));
+      setSettings((s) => (s ? { ...s, geminiApiKey: '', geminiApiKeys: [] } : null));
       setTestResult(null);
     }
   };
 
   const handleTestConnection = async () => {
     const keyToTest = apiKeyInput.trim() || settings.geminiApiKey;
-    if (!keyToTest) {
-      setTestResult({ valid: false, message: 'Please enter an API key first' });
+    const keys = parseApiKeys(keyToTest);
+    if (keys.length === 0) {
+      setTestResult({ valid: false, message: 'Please enter at least one API key first' });
       return;
     }
 
     setIsTestingKey(true);
     setTestResult(null);
 
-    const res = await geminiClient.validateApiKey(keyToTest, settings.geminiModel);
+    const targetModel = settings.geminiModel === 'gemini-2.5-flash' ? 'gemini-3.8-flash' : settings.geminiModel;
+    const res = await geminiClient.validateApiKey(keys.join('\n'), targetModel);
     setIsTestingKey(false);
 
     if (res.valid) {
+      if (settings.geminiModel === 'gemini-2.5-flash') {
+        await handleUpdate('geminiModel', 'gemini-3.8-flash');
+      }
       setTestResult({
         valid: true,
-        message: `Successfully connected to Gemini using ${res.model}!`
+        message: keys.length > 1
+          ? `All ${keys.length} API keys verified successfully with ${res.model}! (Automatic failover enabled)`
+          : `Successfully connected to Gemini using ${res.model}!`
       });
-      // Automatically save valid key
-      handleUpdate('geminiApiKey', keyToTest);
+      // Automatically save valid keys
+      await handleSaveApiKey();
     } else {
       setTestResult({
         valid: false,
-        message: res.error || 'Connection failed'
+        message: res.error || 'Connection failed. Please check your API key.'
       });
     }
   };
@@ -197,36 +211,87 @@ export const Options: React.FC = () => {
             </div>
 
             <div className="settings-section-card">
-              <div className="section-card-title">Google AI Studio API Key</div>
+              <div className="section-card-title">Google AI Studio API Key(s)</div>
 
-              <div className="form-group">
-                <label className="form-label">{t.settings.ai.apiKey}</label>
-                <div className="api-key-wrap">
-                  <input
-                    type={showApiKey ? 'text' : 'password'}
-                    className="text-input"
-                    placeholder="AIzaSy..."
-                    value={apiKeyInput}
-                    onChange={(e) => setApiKeyInput(e.target.value)}
-                  />
-                  <button
-                    className="btn btn-secondary"
-                    onClick={() => setShowApiKey(!showApiKey)}
-                    title="Toggle Visibility"
-                  >
-                    {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                  <button className="btn btn-primary" onClick={handleSaveApiKey}>
-                    {t.actions.save}
-                  </button>
-                  {settings.geminiApiKey && (
-                    <button className="btn btn-danger" onClick={handleDeleteApiKey} title={t.actions.deleteKey}>
-                      <Trash2 size={16} />
-                    </button>
-                  )}
-                </div>
-                <div className="form-hint">{t.settings.ai.apiKeyHint}</div>
-              </div>
+              {(() => {
+                const parsedKeys = parseApiKeys(apiKeyInput);
+                const poolStatus = geminiClient.getKeyPool().getStatus();
+
+                return (
+                  <div className="form-group">
+                    <label className="form-label">{t.settings.ai.apiKey}</label>
+                    <div className="api-key-wrap" style={{ alignItems: 'flex-start' }}>
+                      <textarea
+                        className={`api-keys-textarea ${!showApiKey ? 'masked' : ''}`}
+                        placeholder="AIzaSy... (Paste one or multiple keys, one per line)"
+                        rows={Math.min(6, Math.max(2, parsedKeys.length || 2))}
+                        value={apiKeyInput}
+                        onChange={(e) => setApiKeyInput(e.target.value)}
+                      />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <button
+                          className="btn btn-secondary"
+                          onClick={() => setShowApiKey(!showApiKey)}
+                          title="Toggle Visibility"
+                        >
+                          {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </button>
+                        <button className="btn btn-primary" onClick={handleSaveApiKey}>
+                          {t.actions.save}
+                        </button>
+                        {(settings.geminiApiKey || (settings.geminiApiKeys && settings.geminiApiKeys.length > 0)) && (
+                          <button className="btn btn-danger" onClick={handleDeleteApiKey} title={t.actions.deleteKey}>
+                            <Trash2 size={16} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {parsedKeys.length > 1 && (
+                      <div className="api-keys-badge">
+                        <span>⚡</span>
+                        <span>
+                          {parsedKeys.length} {t.settings.ai.apiKeyCount}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="form-hint">{t.settings.ai.apiKeyHint}</div>
+
+                    {/* Key pool diagnostic preview */}
+                    {parsedKeys.length > 1 && (
+                      <div className="api-keys-pool-list">
+                        {parsedKeys.map((key, idx) => {
+                          const status = poolStatus.find((s) => s.key === key);
+                          const isCurrentActive = status ? status.isActive : idx === 0;
+                          const isLimited = status?.isRateLimited || false;
+
+                          return (
+                            <div key={key + idx} className="api-key-item-badge">
+                              <span className="api-key-mono">
+                                #{idx + 1}: {status?.maskedKey || (key.length > 10 ? `${key.slice(0, 6)}...${key.slice(-4)}` : key)}
+                              </span>
+                              {isLimited ? (
+                                <span className="api-key-pill api-key-pill-limited">
+                                  {t.settings.ai.apiKeyRateLimited} ({status?.cooldownRemainingSeconds}s)
+                                </span>
+                              ) : isCurrentActive ? (
+                                <span className="api-key-pill api-key-pill-active">
+                                  ● {t.settings.ai.apiKeyActiveBadge}
+                                </span>
+                              ) : (
+                                <span className="api-key-pill api-key-pill-ready">
+                                  {t.settings.ai.apiKeyReady}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
                 <button

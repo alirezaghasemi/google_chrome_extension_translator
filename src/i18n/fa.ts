@@ -114,8 +114,12 @@ export const fa = {
       autoRestore: 'بازگرداندن خودکار موقعیت اسکرول پس از ضبط'
     },
     ai: {
-      apiKey: 'کلید اختصاصی Google AI Studio / Gemini API',
-      apiKeyHint: 'کلید خود را به صورت رایگان از aistudio.google.com دریافت کنید',
+      apiKey: 'کلید(های) اختصاصی Google AI Studio / Gemini API',
+      apiKeyHint: 'می‌توانید یک یا چند کلید را وارد کنید (هر کلید در یک خط یا با ویرگول جدا شود). در صورت پر شدن سهمیه، سیستم به صورت خودکار به کلید بعدی سوییچ می‌کند.',
+      apiKeyCount: 'کلید فعال (سوییچ خودکار در زمان محدودیت)',
+      apiKeyActiveBadge: 'کلید فعال فعلی',
+      apiKeyRateLimited: 'محدودیت سهمیه (Cooldown)',
+      apiKeyReady: 'آماده به کار',
       model: 'مدل هوش مصنوعی',
       temperature: 'درجه خلاقیت / دقت (Temperature)',
       timeout: 'مهلت پاسخ درخواست (ثانیه)'

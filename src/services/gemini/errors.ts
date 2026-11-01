@@ -29,6 +29,17 @@ export class GeminiApiError extends Error {
 
   public static fromHttpResponse(status: number, errorData?: { error?: { message?: string; status?: string } }): GeminiApiError {
     const rawMsg = errorData?.error?.message || '';
+    const errorStatus = errorData?.error?.status || '';
+
+    if (
+      status === 429 ||
+      errorStatus === 'RESOURCE_EXHAUSTED' ||
+      rawMsg.toLowerCase().includes('quota') ||
+      rawMsg.toLowerCase().includes('rate limit') ||
+      rawMsg.toLowerCase().includes('resource_exhausted')
+    ) {
+      return new GeminiApiError('Gemini API rate limit exceeded. Please wait a moment and try again.', 'RATE_LIMIT_EXCEEDED', 429, true);
+    }
 
     if (status === 400) {
       if (rawMsg.toLowerCase().includes('api_key_invalid') || rawMsg.toLowerCase().includes('key not valid')) {
@@ -39,10 +50,6 @@ export class GeminiApiError extends Error {
 
     if (status === 401 || status === 403) {
       return new GeminiApiError('Gemini API key is unauthorized or lacks permission.', 'INVALID_API_KEY', status, false);
-    }
-
-    if (status === 429) {
-      return new GeminiApiError('Gemini API rate limit exceeded. Please wait a moment and try again.', 'RATE_LIMIT_EXCEEDED', 429, true);
     }
 
     if (status === 503 || status === 500) {

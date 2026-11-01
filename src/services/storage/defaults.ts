@@ -31,7 +31,8 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
 
   // AI & Gemini
   geminiApiKey: '',
-  geminiModel: 'gemini-2.5-flash',
+  geminiApiKeys: [],
+  geminiModel: 'gemini-3.8-flash',
   temperature: 0.2,
   requestTimeout: 30000
 };
@@ -52,8 +53,10 @@ export const SUPPORTED_LANGUAGES = [
 ] as const;
 
 export const GEMINI_MODELS = [
-  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Fast, Recommended)', supportsVision: true },
-  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (Highest Accuracy)', supportsVision: true },
-  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (Balanced)', supportsVision: true },
-  { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (Complex Reasoning)', supportsVision: true }
+  { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Latest, Recommended)', supportsVision: true },
+  { id: 'gemini-3.8-pro', name: 'Gemini 3.8 Pro (Highest Accuracy, Latest)', supportsVision: true },
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', supportsVision: true },
+  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', supportsVision: true },
+  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', supportsVision: true },
+  { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', supportsVision: true }
 ] as const;

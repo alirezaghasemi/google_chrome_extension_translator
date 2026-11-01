@@ -114,8 +114,12 @@ export const en = {
       autoRestore: 'Automatically restore scroll position after capture'
     },
     ai: {
-      apiKey: 'Google AI Studio / Gemini API Key',
-      apiKeyHint: 'Enter your personal Gemini API key from aistudio.google.com',
+      apiKey: 'Google AI Studio / Gemini API Key(s)',
+      apiKeyHint: 'Enter one or more API keys (one per line or comma-separated). If one key hits rate limit, it automatically switches to the next.',
+      apiKeyCount: 'keys configured (Auto-failover enabled)',
+      apiKeyActiveBadge: 'Active key',
+      apiKeyRateLimited: 'Rate limited (cooling down)',
+      apiKeyReady: 'Ready',
       model: 'AI Model',
       temperature: 'Temperature (Creativity / Accuracy)',
       timeout: 'Request Timeout (seconds)'

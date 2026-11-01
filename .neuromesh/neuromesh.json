@@ -1,5 +1,15 @@
 {
   "project_facts": {
+    "google_chrome_extension_translator:framework:javascript_toolchain": {
+      "id": "83bc29ba-b69c-46b0-95a9-a50127a20215",
+      "project_id": "google_chrome_extension_translator",
+      "category": "framework",
+      "key": "javascript_toolchain",
+      "content": "Node/TypeScript project with package.json",
+      "confidence": 1.0,
+      "created_at": "2026-11-01T08:42:47.439099865Z",
+      "updated_at": "2026-11-01T08:42:47.439099865Z"
+    },
     "google_chorme_extension:framework:javascript_toolchain": {
       "id": "df75f9e1-ddf7-4195-bb7a-cfe2dd8e1a51",
       "project_id": "google_chorme_extension",
@@ -9,16 +19,6 @@
       "confidence": 1.0,
       "created_at": "2026-09-04T19:38:23.628419421Z",
       "updated_at": "2026-09-04T19:38:23.628419421Z"
-    },
-    "google_chrome_extension_translator:framework:javascript_toolchain": {
-      "id": "c287e51e-581b-4cc0-958c-97dd7e5e0109",
-      "project_id": "google_chrome_extension_translator",
-      "category": "framework",
-      "key": "javascript_toolchain",
-      "content": "Node/TypeScript project with package.json",
-      "confidence": 1.0,
-      "created_at": "2026-11-01T05:23:22.874949019Z",
-      "updated_at": "2026-11-01T05:23:22.874949019Z"
     }
   },
   "episodes": []

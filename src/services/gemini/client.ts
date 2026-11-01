@@ -14,11 +14,13 @@ import {
 } from './prompts';
 import { REGION_TRANSLATION_SCHEMA, BATCH_TRANSLATION_SCHEMA } from './schemas';
 import { ExplanationLevel, TranslationStyle } from '../../types/settings';
+import { parseApiKeys, ApiKeyPool } from './key-manager';
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 export class GeminiClient {
   private static instance: GeminiClient;
+  private keyPool = new ApiKeyPool();
 
   public static getInstance(): GeminiClient {
     if (!GeminiClient.instance) {
@@ -27,15 +29,19 @@ export class GeminiClient {
     return GeminiClient.instance;
   }
 
+  public getKeyPool(): ApiKeyPool {
+    return this.keyPool;
+  }
+
   /**
-   * Internal request sender with retry logic and timeout.
+   * Internal request sender with retry logic and timeout for a single designated API key.
    */
-  private async executeRequest(
+  public async executeSingleKeyRequest(
     model: string,
     apiKey: string,
     payload: GeminiRequestPayload,
     timeoutMs: number,
-    retryCount = 2
+    retryCount = 1
   ): Promise<string> {
     if (!apiKey || apiKey.trim().length === 0) {
       throw new GeminiApiError(
@@ -120,6 +126,107 @@ export class GeminiClient {
   }
 
   /**
+   * High-level request sender with automatic multi-key failover.
+   * If a key hits rate limit (429 / RESOURCE_EXHAUSTED) or invalid key,
+   * it fails over seamlessly to the next configured key.
+   */
+  public async executeRequest(
+    model: string,
+    payload: GeminiRequestPayload,
+    timeoutMs: number
+  ): Promise<string> {
+    const settings = await storageService.getSettings();
+    const configuredKeys = parseApiKeys(
+      settings.geminiApiKeys && settings.geminiApiKeys.length > 0
+        ? settings.geminiApiKeys
+        : settings.geminiApiKey
+    );
+
+    if (configuredKeys.length === 0) {
+      throw new GeminiApiError(
+        'Gemini API key is not configured. Please enter your API key in Settings.',
+        'MISSING_API_KEY'
+      );
+    }
+
+    this.keyPool.setKeys(configuredKeys);
+
+    const totalKeys = configuredKeys.length;
+    let lastError: GeminiApiError | null = null;
+    let attemptsCount = 0;
+
+    // If multiple keys are available, failover immediately on 429 without slow retry backoff.
+    // If only 1 key is configured, allow 1 retry attempt.
+    const retryPerKey = totalKeys > 1 ? 0 : 1;
+
+    while (attemptsCount < totalKeys) {
+      const activeKey = this.keyPool.getAvailableKey();
+      if (!activeKey) break;
+
+      attemptsCount++;
+
+      try {
+        const result = await this.executeSingleKeyRequest(model, activeKey, payload, timeoutMs, retryPerKey);
+        this.keyPool.markSuccess(activeKey);
+        return result;
+      } catch (err: unknown) {
+        if (err instanceof GeminiApiError) {
+          lastError = err;
+
+          const isRateLimit =
+            err.code === 'RATE_LIMIT_EXCEEDED' ||
+            err.code === 'QUOTA_EXCEEDED' ||
+            err.httpStatus === 429;
+
+          const isInvalidKey =
+            err.code === 'INVALID_API_KEY' ||
+            err.httpStatus === 400 ||
+            err.httpStatus === 401 ||
+            err.httpStatus === 403;
+
+          if (isRateLimit) {
+            this.keyPool.markRateLimited(activeKey);
+            console.warn(
+              `[GeminiClient] API key (${ApiKeyPool.maskKey(activeKey)}) rate limit exceeded. Failing over to next key (${attemptsCount}/${totalKeys})...`
+            );
+          } else if (isInvalidKey) {
+            this.keyPool.markInvalid(activeKey);
+            console.warn(
+              `[GeminiClient] API key (${ApiKeyPool.maskKey(activeKey)}) invalid/unauthorized. Failing over to next key (${attemptsCount}/${totalKeys})...`
+            );
+          } else if (err.httpStatus === 404 && model !== 'gemini-3.8-flash') {
+            console.warn(`[GeminiClient] Model ${model} is discontinued by Google. Auto-upgrading to gemini-3.8-flash...`);
+            await storageService.saveSettings({ geminiModel: 'gemini-3.8-flash' });
+            return this.executeRequest('gemini-3.8-flash', payload, timeoutMs);
+          } else {
+            // Other non-key errors (e.g. SAFETY_BLOCKED or TIMEOUT) should not rotate keys
+            throw err;
+          }
+
+          if (attemptsCount < totalKeys && this.keyPool.hasAvailableKey()) {
+            continue;
+          }
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    if (lastError?.code === 'RATE_LIMIT_EXCEEDED' || lastError?.httpStatus === 429) {
+      throw new GeminiApiError(
+        totalKeys > 1
+          ? `Gemini API rate limit exceeded on all ${totalKeys} configured API keys. Please wait a moment or add another key.`
+          : 'Gemini API rate limit exceeded. Please wait a moment and try again.',
+        'RATE_LIMIT_EXCEEDED',
+        429,
+        true
+      );
+    }
+
+    throw lastError || new GeminiApiError('Failed to communicate with Gemini.', 'UNKNOWN_ERROR');
+  }
+
+  /**
    * Safely parses JSON output from Gemini, stripping potential markdown blocks.
    */
   private parseJsonSafe<T>(rawText: string, fallbackExtractor?: (text: string) => T): T {
@@ -172,7 +279,6 @@ export class GeminiClient {
 
     const rawResponse = await this.executeRequest(
       settings.geminiModel,
-      settings.geminiApiKey,
       payload,
       settings.requestTimeout
     );
@@ -230,7 +336,6 @@ export class GeminiClient {
 
     const rawResponse = await this.executeRequest(
       settings.geminiModel,
-      settings.geminiApiKey,
       payload,
       settings.requestTimeout
     );
@@ -274,7 +379,6 @@ export class GeminiClient {
 
     const rawResponse = await this.executeRequest(
       settings.geminiModel,
-      settings.geminiApiKey,
       payload,
       settings.requestTimeout
     );
@@ -283,14 +387,35 @@ export class GeminiClient {
   }
 
   /**
-   * Validates an API key with a minimal token query.
+   * Validates one or multiple API keys.
    */
   public async validateApiKey(
     apiKey: string,
-    model = 'gemini-2.5-flash'
-  ): Promise<{ valid: boolean; model: string; error?: string }> {
-    if (!apiKey || apiKey.trim().length === 0) {
-      return { valid: false, model, error: 'API key cannot be empty' };
+    model = 'gemini-3.8-flash'
+  ): Promise<{ valid: boolean; model: string; error?: string; totalKeys?: number; validCount?: number }> {
+    const effectiveModel = model === 'gemini-2.5-flash' ? 'gemini-3.8-flash' : model;
+    const keys = parseApiKeys(apiKey);
+    if (keys.length === 0) {
+      return { valid: false, model: effectiveModel, error: 'API key cannot be empty' };
+    }
+
+    if (keys.length > 1) {
+      const results = await this.validateAllKeys(keys, effectiveModel);
+      const validCount = results.filter((r) => r.valid).length;
+      const allValid = validCount === keys.length;
+
+      if (allValid) {
+        return { valid: true, model: effectiveModel, totalKeys: keys.length, validCount };
+      } else {
+        const failed = results.find((r) => !r.valid);
+        return {
+          valid: false,
+          model: effectiveModel,
+          totalKeys: keys.length,
+          validCount,
+          error: `${validCount}/${keys.length} keys valid. ${failed ? failed.maskedKey + ': ' + failed.error : ''}`
+        };
+      }
     }
 
     try {
@@ -299,16 +424,85 @@ export class GeminiClient {
         generationConfig: { maxOutputTokens: 5 }
       };
 
-      await this.executeRequest(model, apiKey, payload, 10000, 0);
-      return { valid: true, model };
+      await this.executeSingleKeyRequest(effectiveModel, keys[0], payload, 10000, 0);
+      return { valid: true, model: effectiveModel, totalKeys: 1, validCount: 1 };
     } catch (err: unknown) {
       const error = err as GeminiApiError;
+
+      // If 404 model discontinued error was returned for an older model, try gemini-3.8-flash fallback
+      if (error.httpStatus === 404 && effectiveModel !== 'gemini-3.8-flash') {
+        try {
+          const payload: GeminiRequestPayload = {
+            contents: [{ role: 'user', parts: [{ text: 'Respond with "OK".' }] }],
+            generationConfig: { maxOutputTokens: 5 }
+          };
+          await this.executeSingleKeyRequest('gemini-3.8-flash', keys[0], payload, 10000, 0);
+          await storageService.saveSettings({ geminiModel: 'gemini-3.8-flash' });
+          return { valid: true, model: 'gemini-3.8-flash', totalKeys: 1, validCount: 1 };
+        } catch {
+          // fall through to original error
+        }
+      }
+
       return {
         valid: false,
-        model,
+        model: effectiveModel,
+        totalKeys: 1,
+        validCount: 0,
         error: error.message || 'Verification failed'
       };
     }
+  }
+
+  public async validateAllKeys(
+    keys: string[],
+    model = 'gemini-3.8-flash'
+  ): Promise<Array<{ key: string; maskedKey: string; valid: boolean; error?: string }>> {
+    const effectiveModel = model === 'gemini-2.5-flash' ? 'gemini-3.8-flash' : model;
+    const results = [];
+    for (const key of keys) {
+      try {
+        const payload: GeminiRequestPayload = {
+          contents: [{ role: 'user', parts: [{ text: 'Respond with "OK".' }] }],
+          generationConfig: { maxOutputTokens: 5 }
+        };
+        await this.executeSingleKeyRequest(effectiveModel, key, payload, 10000, 0);
+        results.push({
+          key,
+          maskedKey: ApiKeyPool.maskKey(key),
+          valid: true
+        });
+      } catch (err: unknown) {
+        const error = err as GeminiApiError;
+
+        // Fallback to gemini-3.8-flash if 404 model discontinued
+        if (error.httpStatus === 404 && effectiveModel !== 'gemini-3.8-flash') {
+          try {
+            const payload: GeminiRequestPayload = {
+              contents: [{ role: 'user', parts: [{ text: 'Respond with "OK".' }] }],
+              generationConfig: { maxOutputTokens: 5 }
+            };
+            await this.executeSingleKeyRequest('gemini-3.8-flash', key, payload, 10000, 0);
+            results.push({
+              key,
+              maskedKey: ApiKeyPool.maskKey(key),
+              valid: true
+            });
+            continue;
+          } catch {
+            // fall through
+          }
+        }
+
+        results.push({
+          key,
+          maskedKey: ApiKeyPool.maskKey(key),
+          valid: false,
+          error: error.message || 'Verification failed'
+        });
+      }
+    }
+    return results;
   }
 }
 
