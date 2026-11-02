@@ -102,6 +102,10 @@ export const Popup: React.FC = () => {
 
   const handleTranslatePage = async () => {
     if (!activeTabId || !settings) return;
+    if (isPdf && !activeTabUrl?.includes('pdf-viewer.html')) {
+      handleOpenPdfTranslator();
+      return;
+    }
     try {
       if (isTranslated) {
         await chrome.tabs.sendMessage(activeTabId, {
@@ -126,11 +130,7 @@ export const Popup: React.FC = () => {
     if (!activeTabId) return;
 
     if (isPdf && !activeTabUrl?.includes('pdf-viewer.html')) {
-      await chrome.runtime.sendMessage({
-        type: 'LAUNCH_PDF_SNIPPER',
-        payload: { tabId: activeTabId }
-      } as ExtensionMessage);
-      window.close();
+      handleOpenPdfTranslator();
       return;
     }
 
@@ -139,10 +139,14 @@ export const Popup: React.FC = () => {
         type: 'START_REGION_SELECTION'
       } as ExtensionMessage);
     } catch {
-      await chrome.runtime.sendMessage({
-        type: 'LAUNCH_PDF_SNIPPER',
-        payload: { tabId: activeTabId }
-      } as ExtensionMessage);
+      if (isPdf) {
+        handleOpenPdfTranslator();
+      } else {
+        await chrome.runtime.sendMessage({
+          type: 'LAUNCH_PDF_SNIPPER',
+          payload: { tabId: activeTabId }
+        } as ExtensionMessage);
+      }
     }
     window.close();
   };

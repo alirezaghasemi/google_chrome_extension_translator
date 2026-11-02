@@ -94,7 +94,7 @@ async function startRegionTranslationFlow(tab: chrome.tabs.Tab): Promise<void> {
       chrome.tabs.sendMessage(tab.id, { type: 'START_REGION_SELECTION' } as ExtensionMessage).catch(() => {});
       return;
     }
-    await launchPdfSnipper(tab);
+    openPdfTranslatorTab(tab.url);
     return;
   }
 

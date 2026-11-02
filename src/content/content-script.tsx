@@ -15,7 +15,6 @@ import {
   TranslateSelectionPayload
 } from '../types/messages';
 import shadowStyles from '../styles/shadow-styles.css?inline';
-import { getActionFromKeyEvent } from '../utils/shortcuts';
 
 (function initializeContentScript() {
   if (document.getElementById(EXTENSION_ROOT_ID)) {
@@ -203,91 +202,6 @@ import { getActionFromKeyEvent } from '../utils/shortcuts';
 
       default:
         break;
-    }
-  });
-
-  // Webpage keyboard shortcuts listener (Shift + 1/2/3/4)
-  window.addEventListener('keydown', async (e: KeyboardEvent) => {
-    // Only trigger if Shift key is held and no conflict modifiers
-    if (!e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
-
-    const action = getActionFromKeyEvent(e);
-    if (!action) return;
-
-    e.preventDefault();
-
-    switch (action) {
-      case 'translate-page': {
-        if (pageTranslator.isPageTranslated()) {
-          pageTranslator.restoreOriginal();
-        } else {
-          const settings = await storageService.getSettings();
-          pageTranslator.start(settings.targetLanguage);
-        }
-        break;
-      }
-
-      case 'translate-region': {
-        regionSelector.start(
-          shadowRoot,
-          async (rect) => {
-            try {
-              const result = await translateRegion(rect);
-              if (appHandle) {
-                appHandle.addTranslationResult(result);
-              }
-            } catch (err: unknown) {
-              const error = err as Error;
-              console.error('Region translation error:', err);
-              alert(`Translation failed: ${error.message || 'Unknown error'}`);
-            }
-          },
-          () => {}
-        );
-        break;
-      }
-
-      case 'capture-screenshot': {
-        try {
-          host.style.visibility = 'hidden';
-          const settings = await storageService.getSettings();
-          const resp: ExtensionResponse<string> = await chrome.runtime.sendMessage({
-            type: 'CAPTURE_VISIBLE_TAB',
-            payload: {
-              format: settings.screenshotFormat,
-              quality: settings.screenshotQuality
-            }
-          } as ExtensionMessage);
-          host.style.visibility = 'visible';
-
-          if (resp.success && resp.data && appHandle) {
-            const dpr = window.devicePixelRatio || 1;
-            appHandle.showScreenshotPreview({
-              dataUrl: resp.data,
-              format: settings.screenshotFormat,
-              width: Math.round(window.innerWidth * dpr),
-              height: Math.round(window.innerHeight * dpr),
-              timestamp: Date.now()
-            });
-          }
-        } catch (err) {
-          host.style.visibility = 'visible';
-          console.error('Capture screenshot error:', err);
-        }
-        break;
-      }
-
-      case 'capture-fullpage': {
-        try {
-          const ss = await fullPageCapturer.captureFullPage();
-          if (appHandle) {
-            appHandle.showScreenshotPreview(ss);
-          }
-        } catch (err) {
-          console.error('Full page capture error:', err);
-        }
-        break;
-      }
     }
   });
 })();

@@ -68,6 +68,37 @@ export class PdfDocumentTranslator {
     this.notify();
   }
 
+  public setParagraphTranslation(
+    pageNumber: number,
+    paragraphIndex: number,
+    originalParagraphs: string[],
+    translatedText: string,
+    targetLanguage: string
+  ): PageTranslationResult {
+    const existing = this.translations.get(pageNumber);
+    const original = existing?.originalParagraphs || originalParagraphs;
+    const translated = existing
+      ? [...existing.translatedParagraphs]
+      : new Array(original.length).fill('');
+
+    while (translated.length < original.length) {
+      translated.push('');
+    }
+
+    translated[paragraphIndex] = translatedText;
+
+    const updated: PageTranslationResult = {
+      pageNumber,
+      originalParagraphs: original,
+      translatedParagraphs: translated,
+      targetLanguage: targetLanguage || existing?.targetLanguage || 'fa'
+    };
+
+    this.translations.set(pageNumber, updated);
+    this.notify();
+    return updated;
+  }
+
   public getPageTranslation(pageNumber: number): PageTranslationResult | undefined {
     return this.translations.get(pageNumber);
   }

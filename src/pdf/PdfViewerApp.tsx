@@ -25,6 +25,7 @@ import { storageService } from '../services/storage/storage-service';
 import { SUPPORTED_LANGUAGES, DEFAULT_SETTINGS } from '../services/storage/defaults';
 import { ExtensionSettings } from '../types/settings';
 import { TranslationResult } from '../types/translation';
+import { TermExplanation } from '../types/gemini';
 import { geminiClient } from '../services/gemini/client';
 import { normalizeRect, NormalizedRect } from '../content/selection/coords';
 import {
@@ -68,6 +69,19 @@ export const PdfViewerApp: React.FC = () => {
   // Copied indicator
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
 
+  // Per-paragraph translating indicator
+  const [translatingParaIdx, setTranslatingParaIdx] = useState<number | null>(null);
+
+  // Floating selection popover for highlighted text
+  const [selectionPopover, setSelectionPopover] = useState<{
+    text: string;
+    translation?: string;
+    explanations?: TermExplanation[];
+    x: number;
+    y: number;
+    loading: boolean;
+  } | null>(null);
+
   // Region Selection State
   const [isRegionSelecting, setIsRegionSelecting] = useState(false);
   const [isDraggingRegion, setIsDraggingRegion] = useState(false);
@@ -101,9 +115,13 @@ export const PdfViewerApp: React.FC = () => {
       loadFromUrl(srcUrl);
     }
 
-    // Keyboard shortcut handler for Shift+2 / Escape
+    // Keyboard shortcut handler for Escape (dismiss selection popover or cancel region selection)
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (selectionPopover) {
+          setSelectionPopover(null);
+          return;
+        }
         if (activePanels.length > 0) {
           setActivePanels((prev) => prev.slice(0, -1));
           if (activePanels.length <= 1) setPersistentRegionRect(null);
@@ -113,15 +131,6 @@ export const PdfViewerApp: React.FC = () => {
           setCurrentRegionRect(null);
         }
         return;
-      }
-
-      if (e.shiftKey && (e.key === '2' || e.key === '@')) {
-        const activeEl = document.activeElement;
-        const isInput = activeEl?.tagName === 'INPUT' || activeEl?.tagName === 'TEXTAREA';
-        if (!isInput) {
-          e.preventDefault();
-          setIsRegionSelecting((prev) => !prev);
-        }
       }
     };
 
@@ -442,43 +451,60 @@ export const PdfViewerApp: React.FC = () => {
     }
   };
 
+  // Translate a single selected paragraph individually
+  const handleTranslateSingleParagraph = async (idx: number, text: string) => {
+    if (translatingParaIdx !== null || isTranslatingPage || isTranslatingDoc) return;
+    setTranslatingParaIdx(idx);
+
+    try {
+      const res = await geminiClient.translateRegionText(text, { targetLanguage: targetLang });
+      const updated = pdfDocumentTranslator.setParagraphTranslation(
+        currentPage,
+        idx,
+        currentParagraphs,
+        res.translation,
+        targetLang
+      );
+      setCurrentTranslation(updated);
+    } catch (err: unknown) {
+      const error = err as Error;
+      alert(`خطا در ترجمه پاراگراف: ${error.message || 'Network error'}`);
+    } finally {
+      setTranslatingParaIdx(null);
+    }
+  };
+
   // Handle text selection in translated column or canvas
   const handleMouseUp = async (e: React.MouseEvent) => {
     if (isRegionSelecting || isDraggingRegion) return;
     const sel = window.getSelection();
     const text = sel?.toString().trim();
-    if (text && text.length > 2 && text.length < 500) {
+    if (text && text.length > 2 && text.length < 1500) {
       const rect = sel?.getRangeAt(0).getBoundingClientRect();
-      const x = rect ? rect.right + 16 : e.clientX + 16;
-      const y = rect ? rect.top : e.clientY;
+      const x = rect ? rect.left + window.scrollX : e.clientX;
+      const y = rect ? rect.bottom + window.scrollY + 8 : e.clientY + 8;
+
+      setSelectionPopover({
+        text,
+        x: Math.max(16, Math.min(x, window.innerWidth - 400)),
+        y: Math.max(16, y),
+        loading: true
+      });
 
       try {
         const res = await geminiClient.translateRegionText(text, { targetLanguage: targetLang });
-        const effectiveSettings = settings || DEFAULT_SETTINGS;
-        const newResult = createPdfTranslationResult(
-          {
-            translation: res.translation,
-            detectedText: text,
-            sourceLanguage: res.sourceLanguage,
-            targetLanguage: res.targetLanguage,
-            explanations: res.explanations
-          },
-          {
-            sourceTextFallback: text,
-            isVisual: false,
-            targetLanguageFallback: targetLang
-          }
+        setSelectionPopover((prev) =>
+          prev && prev.text === text
+            ? {
+                ...prev,
+                translation: res.translation,
+                explanations: res.explanations,
+                loading: false
+              }
+            : prev
         );
-
-        const clampedPos = {
-          x: Math.max(16, Math.min(window.innerWidth - (effectiveSettings.panelWidth || 420) - 16, x)),
-          y: Math.max(16, Math.min(window.innerHeight - 300, y))
-        };
-
-        setPanelPositions((prev) => new Map(prev).set(newResult.id, clampedPos));
-        setActivePanels((prev) => [...prev, newResult]);
-      } catch (err) {
-        console.error('Failed to translate selected text:', err);
+      } catch {
+        setSelectionPopover(null);
       }
     }
   };
@@ -889,6 +915,7 @@ export const PdfViewerApp: React.FC = () => {
               ) : (
                 currentParagraphs.map((originalText, idx) => {
                   const translatedText = currentTranslation?.translatedParagraphs[idx];
+                  const isParaTranslating = translatingParaIdx === idx;
 
                   return (
                     <div key={idx} className="pdf-para-card">
@@ -899,23 +926,54 @@ export const PdfViewerApp: React.FC = () => {
                           {translatedText}
                         </div>
                       ) : (
-                        <div style={{ color: 'var(--pdf-text-muted)', fontSize: '13px', fontStyle: 'italic' }}>
-                          Click &quot;Translate Page&quot; to translate this paragraph with Gemini.
+                        <div style={{ color: 'var(--pdf-text-muted)', fontSize: '13px', fontStyle: 'italic', marginTop: '4px' }}>
+                          {isPersian
+                            ? 'برای ترجمه این بخش، دکمه «ترجمه این پاراگراف» را بزنید یا متن را با ماوس انتخاب کنید.'
+                            : 'Click "Translate Paragraph" below or select any text to translate.'}
                         </div>
                       )}
 
-                      {translatedText && (
-                        <div className="pdf-para-actions">
+                      <div className="pdf-para-actions" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '8px' }}>
+                        <button
+                          className="pdf-btn"
+                          style={{
+                            fontSize: '11px',
+                            padding: '3px 8px',
+                            background: translatedText ? 'rgba(255, 255, 255, 0.06)' : 'rgba(99, 102, 241, 0.15)',
+                            borderColor: translatedText ? 'var(--pdf-border)' : 'rgba(99, 102, 241, 0.4)',
+                            color: translatedText ? 'var(--pdf-text-muted)' : '#a5b4fc',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                          disabled={isParaTranslating || isTranslatingPage || isTranslatingDoc}
+                          onClick={() => handleTranslateSingleParagraph(idx, originalText)}
+                          title={translatedText ? (isPersian ? 'ترجمه مجدد این پاراگراف' : 'Retranslate paragraph') : (isPersian ? 'ترجمه این پاراگراف با هوش مصنوعی' : 'Translate this paragraph')}
+                        >
+                          {isParaTranslating ? (
+                            <>
+                              <Loader2 size={12} className="animate-spin" />
+                              <span>{isPersian ? 'در حال ترجمه...' : 'Translating...'}</span>
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles size={12} />
+                              <span>{translatedText ? (isPersian ? 'ترجمه مجدد' : 'Retranslate') : (isPersian ? 'ترجمه این پاراگراف' : 'Translate Paragraph')}</span>
+                            </>
+                          )}
+                        </button>
+
+                        {translatedText && (
                           <button
                             className="pdf-btn pdf-btn-icon"
                             style={{ padding: '4px' }}
                             onClick={() => handleCopyText(translatedText, idx)}
-                            title="Copy translation"
+                            title={isPersian ? 'کپی ترجمه' : 'Copy translation'}
                           >
                             {copiedIdx === idx ? <Check size={13} color="#10b981" /> : <Copy size={13} />}
                           </button>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                   );
                 })
@@ -947,6 +1005,59 @@ export const PdfViewerApp: React.FC = () => {
           />
         );
       })}
+
+      {/* Floating Selection Quick Translate Popover */}
+      {selectionPopover && (
+        <div
+          className="pdf-selection-popover"
+          style={{ left: selectionPopover.x, top: selectionPopover.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <span style={{ fontSize: '11px', fontWeight: 600, color: '#93c5fd', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Sparkles size={12} /> {isPersian ? 'ترجمه هوشمند متن انتخابی' : 'Selection Translation'}
+            </span>
+            <button
+              onClick={() => setSelectionPopover(null)}
+              style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '14px', lineHeight: 1 }}
+            >
+              ×
+            </button>
+          </div>
+
+          <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: 6, maxHeight: 60, overflowY: 'auto' }}>
+            {selectionPopover.text}
+          </div>
+
+          {selectionPopover.loading ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#60a5fa', fontSize: '12px' }}>
+              <Loader2 size={14} className="animate-spin" /> {isPersian ? 'در حال ترجمه...' : 'Translating...'}
+            </div>
+          ) : (
+            <div
+              style={{
+                fontSize: '13px',
+                color: '#f8fafc',
+                lineHeight: 1.6,
+                direction: isPersian ? 'rtl' : 'ltr',
+                textAlign: isPersian ? 'right' : 'left'
+              }}
+            >
+              {selectionPopover.translation}
+            </div>
+          )}
+
+          {selectionPopover.explanations && selectionPopover.explanations.length > 0 && (
+            <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #334155' }}>
+              {selectionPopover.explanations.map((exp, i) => (
+                <div key={i} className="pdf-term-badge" title={exp.meaning}>
+                  <strong>{exp.term}:</strong> {exp.meaning}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
