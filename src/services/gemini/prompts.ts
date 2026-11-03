@@ -100,3 +100,21 @@ ${jsonInput}
 
 Output strictly valid JSON with field: { "translations": [{ "id": number, "translation": string }] }`;
 }
+
+export function createParagraphTranslationPrompt(
+  text: string,
+  targetLanguage: string,
+  style: TranslationStyle
+): string {
+  const styleGuide = getStyleInstruction(style);
+
+  return `You are an expert translation engine.
+Task: Translate the following text into the target language "${targetLanguage}".
+${styleGuide}
+Maintain paragraph breaks and inline formatting.
+If translating into Persian (Farsi), use natural Persian phrasing and correct typography (half-spaces/نیم‌فاصله where appropriate).
+Return ONLY the translated text directly with no introductory commentary, notes, or markdown fences.
+
+Text to translate:
+"""${text}"""`;
+}

@@ -65,9 +65,6 @@ export const Options: React.FC = () => {
   const handleSaveApiKey = async () => {
     const keys = parseApiKeys(apiKeyInput);
     await storageService.setApiKey(keys.join('\n'));
-    if (settings.geminiModel === 'gemini-2.5-flash' || !settings.geminiModel) {
-      await storageService.saveSettings({ geminiModel: 'gemini-3.8-flash' });
-    }
     setApiKeyInput(keys.join('\n'));
     const updated = await storageService.getSettings();
     setSettings(updated);
@@ -88,33 +85,58 @@ export const Options: React.FC = () => {
     const keyToTest = apiKeyInput.trim() || settings.geminiApiKey;
     const keys = parseApiKeys(keyToTest);
     if (keys.length === 0) {
-      setTestResult({ valid: false, message: 'Please enter at least one API key first' });
+      setTestResult({
+        valid: false,
+        message: rtl ? 'لطفاً ابتدا حداقل یک کلید API وارد کنید' : 'Please enter at least one API key first'
+      });
       return;
     }
 
     setIsTestingKey(true);
     setTestResult(null);
 
-    const targetModel = settings.geminiModel === 'gemini-2.5-flash' ? 'gemini-3.8-flash' : settings.geminiModel;
+    const targetModel = settings.geminiModel || 'gemini-3.8-flash';
     const res = await geminiClient.validateApiKey(keys.join('\n'), targetModel);
     setIsTestingKey(false);
 
     if (res.valid) {
-      if (settings.geminiModel === 'gemini-2.5-flash') {
-        await handleUpdate('geminiModel', 'gemini-3.8-flash');
+      if (res.model && res.model !== settings.geminiModel) {
+        await handleUpdate('geminiModel', res.model as GeminiModel);
       }
+
+      let successMsg: string;
+      if (rtl) {
+        successMsg = keys.length > 1
+          ? `همه ${keys.length} کلید API با موفقیت با مدل ${res.model} تأیید شدند! (سیستم جابجایی خودکار فعال است)`
+          : `اتصال به جمینای با مدل ${res.model} با موفقیت برقرار شد!`;
+        if (res.model !== targetModel) {
+          successMsg += ` (مدل به دلیل شلوغی موقت سرورها خودکار به ${res.model} تنظیم شد)`;
+        }
+      } else {
+        successMsg = keys.length > 1
+          ? `All ${keys.length} API keys verified successfully with ${res.model}! (Automatic failover enabled)`
+          : `Successfully connected to Gemini using ${res.model}!`;
+        if (res.model !== targetModel) {
+          successMsg += ` (Auto-switched to ${res.model} due to temporary high demand on ${targetModel})`;
+        }
+      }
+
       setTestResult({
         valid: true,
-        message: keys.length > 1
-          ? `All ${keys.length} API keys verified successfully with ${res.model}! (Automatic failover enabled)`
-          : `Successfully connected to Gemini using ${res.model}!`
+        message: successMsg
       });
       // Automatically save valid keys
       await handleSaveApiKey();
     } else {
+      let errMsg = res.error || (rtl ? 'خطا در اتصال به جمینای. لطفاً کلید API را بررسی کنید.' : 'Connection failed. Please check your API key.');
+      if (errMsg.includes('503') || errMsg.includes('unavailable') || errMsg.includes('temporarily unavailable')) {
+        errMsg = rtl
+          ? 'سرویس جمینای موقتاً با ترافیک بالا مواجه است (503). لطفاً لحظاتی بعد دوباره امتحان کنید یا مدل دیگری را در بخش تنظیمات انتخاب فرمایید.'
+          : 'Gemini service is temporarily experiencing high demand (503). Please retry shortly or select another model in settings.';
+      }
       setTestResult({
         valid: false,
-        message: res.error || 'Connection failed. Please check your API key.'
+        message: errMsg
       });
     }
   };
@@ -356,7 +378,7 @@ export const Options: React.FC = () => {
                   max="120"
                   className="text-input"
                   value={settings.requestTimeout / 1000}
-                  onChange={(e) => handleUpdate('requestTimeout', parseInt(e.target.value || '30') * 1000)}
+                  onChange={(e) => handleUpdate('requestTimeout', parseInt(e.target.value || '60') * 1000)}
                 />
               </div>
             </div>

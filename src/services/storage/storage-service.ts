@@ -60,8 +60,8 @@ export class StorageService {
         const result = await chrome.storage.local.get(STORAGE_KEY);
         const stored = (result[STORAGE_KEY] || {}) as StoredSettings;
         const merged: ExtensionSettings = { ...DEFAULT_SETTINGS, ...stored };
-        if (merged.geminiModel === 'gemini-2.5-flash') {
-          merged.geminiModel = 'gemini-3.8-flash';
+        if (merged.requestTimeout === 30000) {
+          merged.requestTimeout = 60000;
         }
         this.memoryCache = merged;
         return merged;
@@ -70,8 +70,8 @@ export class StorageService {
         const raw = localStorage.getItem(STORAGE_KEY);
         const stored = raw ? (JSON.parse(raw) as StoredSettings) : {};
         const merged: ExtensionSettings = { ...DEFAULT_SETTINGS, ...stored };
-        if (merged.geminiModel === 'gemini-2.5-flash') {
-          merged.geminiModel = 'gemini-3.8-flash';
+        if (merged.requestTimeout === 30000) {
+          merged.requestTimeout = 60000;
         }
         this.memoryCache = merged;
         return merged;

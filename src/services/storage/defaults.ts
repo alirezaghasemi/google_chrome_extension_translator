@@ -34,7 +34,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   geminiApiKeys: [],
   geminiModel: 'gemini-3.8-flash',
   temperature: 0.2,
-  requestTimeout: 30000
+  requestTimeout: 60000
 };
 
 export const SUPPORTED_LANGUAGES = [

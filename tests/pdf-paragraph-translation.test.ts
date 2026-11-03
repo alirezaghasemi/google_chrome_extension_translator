@@ -42,5 +42,56 @@ describe('PDF Paragraph-level Translation (User Selection Mode)', () => {
     expect(updated.translatedParagraphs[1]).toBeFalsy();
     expect(updated.translatedParagraphs[2]).toBe('ترجمه پاراگراف دو');
   });
+
+  it('should support geminiClient.translateParagraph without schema or explanation token overhead', async () => {
+    const { geminiClient } = await import('../src/services/gemini/client');
+    const { storageService } = await import('../src/services/storage/storage-service');
+
+    await storageService.saveSettings({
+      geminiApiKey: 'test-key',
+      geminiModel: 'gemini-3.8-flash',
+      requestTimeout: 30000
+    });
+
+    let sentBody: any = null;
+    globalThis.fetch = vi.fn().mockImplementation(async (_url: string, options: any) => {
+      sentBody = JSON.parse(options.body);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [
+            {
+              content: {
+                parts: [{ text: 'این یک ترجمه مستقیم پاراگراف است.' }]
+              }
+            }
+          ]
+        })
+      };
+    }) as unknown as typeof fetch;
+
+    const res = await geminiClient.translateParagraph('This is a direct paragraph translation.', {
+      targetLanguage: 'fa'
+    });
+
+    expect(res).toBe('این یک ترجمه مستقیم پاراگراف است.');
+    expect(sentBody).not.toBeNull();
+    // Verify no responseSchema is sent, avoiding heavy constrained decoding token generation
+    expect(sentBody.generationConfig?.responseSchema).toBeUndefined();
+    expect(sentBody.generationConfig?.responseMimeType).toBeUndefined();
+  });
+
+  it('should format paragraph translation timeout into actionable Persian guidance', async () => {
+    const { formatParagraphErrorMessage } = await import('../src/services/pdf/pdf-region');
+    const { GeminiApiError } = await import('../src/services/gemini/errors');
+
+    const timeoutErr = new GeminiApiError('Gemini request timed out after 30s.', 'TIMEOUT');
+    const msg = formatParagraphErrorMessage(timeoutErr);
+
+    expect(msg).toContain('پایان رسید');
+    expect(msg).toContain('اینترنت');
+    expect(msg).toContain('تنظیمات');
+  });
 });
 

@@ -107,11 +107,57 @@ export function formatSnipErrorMessage(err: unknown): string {
     return 'محتوای انتخابی توسط فیلترهای ایمنی جمینای مسدود شد.';
   }
 
+  if (status === 503 || status === 500 || msg.includes('unavailable') || msg.includes('temporarily unavailable')) {
+    return 'سرویس جمینای موقتاً با بار ترافیکی بالا مواجه است (503 Service Unavailable). لطفاً لحظاتی دیگر مجدداً تلاش کنید یا مدل دیگری را در بخش تنظیمات انتخاب کنید.';
+  }
+
   if (code === 'TIMEOUT' || msg.includes('timeout')) {
-    return 'زمان اتصال به جمینای به پایان رسید (Timeout). لطفاً اتصال اینترنت خود را بررسی کنید.';
+    return 'زمان اتصال به جمینای به پایان رسید (Timeout). لطفاً اتصال اینترنت یا فیلترشکن خود را بررسی کرده و در صورت نیاز زمان تایم‌اوت را در تنظیمات افزایش دهید.';
   }
 
   return error.message || 'خطا در ترجمه تصویر انتخابی.';
+}
+
+/**
+ * Formats paragraph translation errors into clear, actionable Persian messages.
+ */
+export function formatParagraphErrorMessage(err: unknown): string {
+  if (!err) return 'خطای نامشخص در ترجمه پاراگراف.';
+
+  const error = err as { code?: string; httpStatus?: number; message?: string };
+  const msg = (error.message || '').toLowerCase();
+  const code = error.code || '';
+  const status = error.httpStatus;
+
+  if (code === 'MISSING_API_KEY' || msg.includes('api key is not configured') || msg.includes('missing api key')) {
+    return 'کلید API جمینای تنظیم نشده است. لطفاً از بخش تنظیمات کلید خود را وارد کنید.';
+  }
+
+  if (code === 'RATE_LIMIT_EXCEEDED' || status === 429 || msg.includes('rate limit') || msg.includes('quota')) {
+    return 'محدودیت تعداد درخواست جمینای (Rate Limit). لطفاً کمی صبر کنید یا در بخش تنظیمات کلیدهای بیشتری اضافه کنید.';
+  }
+
+  if (code === 'INVALID_API_KEY' || status === 401 || status === 403 || msg.includes('key not valid') || msg.includes('api key invalid')) {
+    return 'کلید API وارد شده معتبر نیست یا منقضی شده است. لطفاً کلیدهای خود را در تنظیمات بررسی کنید.';
+  }
+
+  if (status === 404 || msg.includes('no longer available') || msg.includes('not found')) {
+    return 'مدل قبلی منقضی شده است و به gemini-3.8-flash تغییر یافت. لطفاً مجدداً امتحان کنید.';
+  }
+
+  if (code === 'SAFETY_BLOCKED' || msg.includes('safety')) {
+    return 'محتوای پاراگراف توسط فیلترهای ایمنی جمینای مسدود شد.';
+  }
+
+  if (status === 503 || status === 500 || msg.includes('unavailable') || msg.includes('temporarily unavailable')) {
+    return 'سرویس جمینای موقتاً با بار ترافیکی بالا مواجه است (503 Service Unavailable). لطفاً لحظاتی دیگر مجدداً تلاش کنید یا مدل دیگری را در بخش تنظیمات انتخاب کنید.';
+  }
+
+  if (code === 'TIMEOUT' || msg.includes('timeout') || msg.includes('timed out')) {
+    return 'زمان اتصال به جمینای به پایان رسید (Timeout). لطفاً اتصال اینترنت یا فیلترشکن خود را بررسی کرده و در صورت نیاز زمان تایم‌اوت را در تنظیمات افزایش دهید.';
+  }
+
+  return error.message || 'خطا در ترجمه پاراگراف.';
 }
 
 /**

@@ -8,6 +8,7 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     assetsInlineLimit: 0,
+    chunkSizeWarningLimit: 1000,
     modulePreload: {
       polyfill: false
     },
@@ -32,7 +33,15 @@ export default defineConfig({
           return 'assets/[name]-[hash].js';
         },
         chunkFileNames: 'assets/[name]-[hash].js',
-        assetFileNames: 'assets/[name]-[hash].[ext]'
+        assetFileNames: 'assets/[name]-[hash].[ext]',
+        manualChunks: (id) => {
+          if (id.includes('node_modules/pdfjs-dist')) {
+            return 'pdfjs';
+          }
+          if (id.includes('node_modules/react') || id.includes('node_modules/react-dom') || id.includes('node_modules/scheduler')) {
+            return 'vendor-react';
+          }
+        }
       }
     }
   }

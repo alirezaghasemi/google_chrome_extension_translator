@@ -33,7 +33,8 @@ import {
   isMeaningfulPdfSelection,
   createPdfTranslationResult,
   calculatePdfPanelPosition,
-  mapDisplayRectToCanvasBitmap
+  mapDisplayRectToCanvasBitmap,
+  formatParagraphErrorMessage
 } from '../services/pdf/pdf-region';
 import { FloatingPanel } from '../content/overlays/FloatingPanel';
 
@@ -69,8 +70,9 @@ export const PdfViewerApp: React.FC = () => {
   // Copied indicator
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
 
-  // Per-paragraph translating indicator
+  // Per-paragraph translating indicator & error state
   const [translatingParaIdx, setTranslatingParaIdx] = useState<number | null>(null);
+  const [paraError, setParaError] = useState<{ idx: number; message: string } | null>(null);
 
   // Floating selection popover for highlighted text
   const [selectionPopover, setSelectionPopover] = useState<{
@@ -438,11 +440,11 @@ export const PdfViewerApp: React.FC = () => {
         prev.map((r) =>
           r.id === res.id
             ? {
-                ...r,
-                translatedText: updated.translation,
-                explanations: updated.explanations || [],
-                timestamp: Date.now()
-              }
+              ...r,
+              translatedText: updated.translation,
+              explanations: updated.explanations || [],
+              timestamp: Date.now()
+            }
             : r
         )
       );
@@ -455,20 +457,26 @@ export const PdfViewerApp: React.FC = () => {
   const handleTranslateSingleParagraph = async (idx: number, text: string) => {
     if (translatingParaIdx !== null || isTranslatingPage || isTranslatingDoc) return;
     setTranslatingParaIdx(idx);
+    setParaError(null);
 
     try {
-      const res = await geminiClient.translateRegionText(text, { targetLanguage: targetLang });
+      const translatedText = await geminiClient.translateParagraph(text, {
+        targetLanguage: targetLang,
+        style: settings?.translationStyle,
+        timeoutMs: Math.max(settings?.requestTimeout || 60000, 60000)
+      });
       const updated = pdfDocumentTranslator.setParagraphTranslation(
         currentPage,
         idx,
         currentParagraphs,
-        res.translation,
+        translatedText,
         targetLang
       );
       setCurrentTranslation(updated);
     } catch (err: unknown) {
-      const error = err as Error;
-      alert(`خطا در ترجمه پاراگراف: ${error.message || 'Network error'}`);
+      const friendlyMsg = formatParagraphErrorMessage(err);
+      setParaError({ idx, message: friendlyMsg });
+      alert(`خطا در ترجمه پاراگراف:\n${friendlyMsg}`);
     } finally {
       setTranslatingParaIdx(null);
     }
@@ -496,11 +504,11 @@ export const PdfViewerApp: React.FC = () => {
         setSelectionPopover((prev) =>
           prev && prev.text === text
             ? {
-                ...prev,
-                translation: res.translation,
-                explanations: res.explanations,
-                loading: false
-              }
+              ...prev,
+              translation: res.translation,
+              explanations: res.explanations,
+              loading: false
+            }
             : prev
         );
       } catch {
@@ -630,11 +638,11 @@ export const PdfViewerApp: React.FC = () => {
                 style={
                   isRegionSelecting
                     ? {
-                        background: 'linear-gradient(135deg, #2563eb, #4f46e5)',
-                        borderColor: '#60a5fa',
-                        color: '#ffffff',
-                        boxShadow: '0 0 12px rgba(59, 130, 246, 0.5)'
-                      }
+                      background: 'linear-gradient(135deg, #2563eb, #4f46e5)',
+                      borderColor: '#60a5fa',
+                      color: '#ffffff',
+                      boxShadow: '0 0 12px rgba(59, 130, 246, 0.5)'
+                    }
                     : {}
                 }
                 onClick={() => {
@@ -930,6 +938,26 @@ export const PdfViewerApp: React.FC = () => {
                           {isPersian
                             ? 'برای ترجمه این بخش، دکمه «ترجمه این پاراگراف» را بزنید یا متن را با ماوس انتخاب کنید.'
                             : 'Click "Translate Paragraph" below or select any text to translate.'}
+                        </div>
+                      )}
+
+                      {paraError?.idx === idx && (
+                        <div
+                          style={{
+                            color: '#f87171',
+                            fontSize: '12px',
+                            marginTop: '6px',
+                            background: 'rgba(239, 68, 68, 0.1)',
+                            border: '1px solid rgba(239, 68, 68, 0.25)',
+                            padding: '6px 10px',
+                            borderRadius: '6px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px'
+                          }}
+                        >
+                          <AlertCircle size={14} style={{ flexShrink: 0 }} />
+                          <span>{paraError.message}</span>
                         </div>
                       )}
 

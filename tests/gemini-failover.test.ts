@@ -259,6 +259,49 @@ describe('API Key Pool & Failover Manager', () => {
       expect(requestedUrls.length).toBeGreaterThanOrEqual(2);
     });
 
+    it('should failover to Key2 when Key1 request times out (TIMEOUT)', async () => {
+      const { geminiClient } = await import('../src/services/gemini/client');
+
+      const requestedUrls: string[] = [];
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+        requestedUrls.push(url);
+        if (url.includes('key=Key1')) {
+          const err = new Error('The operation was aborted');
+          err.name = 'AbortError';
+          throw err;
+        }
+
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      text: JSON.stringify({
+                        sourceLanguage: 'en',
+                        targetLanguage: 'fa',
+                        translation: 'ترجمه از کلید دوم',
+                        explanations: []
+                      })
+                    }
+                  ]
+                }
+              }
+            ]
+          })
+        };
+      }) as unknown as typeof fetch;
+
+      const result = await geminiClient.translateRegionText('Validating timeout failover');
+      expect(result.translation).toBe('ترجمه از کلید دوم');
+      expect(requestedUrls).toHaveLength(2);
+      expect(requestedUrls[0]).toContain('key=Key1');
+      expect(requestedUrls[1]).toContain('key=Key2');
+    });
+
     it('should automatically fall back to gemini-3.8-flash when receiving 404 model discontinued error', async () => {
       const { geminiClient } = await import('../src/services/gemini/client');
 
@@ -307,6 +350,90 @@ describe('API Key Pool & Failover Manager', () => {
       expect(res.valid).toBe(true);
       expect(res.model).toBe('gemini-3.8-flash');
       expect(requestedModels).toContain('gemini-3.8-flash');
+    });
+
+    it('should automatically fall back to alternative model when target model returns 503 temporarily unavailable', async () => {
+      const { geminiClient } = await import('../src/services/gemini/client');
+
+      const attemptedUrls: string[] = [];
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+        attemptedUrls.push(url);
+        // gemini-3.8-flash is experiencing 503 high demand
+        if (url.includes('gemini-3.8-flash')) {
+          return {
+            ok: false,
+            status: 503,
+            json: async () => ({
+              error: {
+                message: 'This model is currently experiencing high demand. Please try again later.',
+                status: 'UNAVAILABLE'
+              }
+            })
+          };
+        }
+
+        // fallback model (e.g. gemini-1.5-flash) succeeds
+        if (url.includes('gemini-1.5-flash')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              candidates: [
+                {
+                  content: {
+                    parts: [{ text: 'OK' }]
+                  }
+                }
+              ]
+            })
+          };
+        }
+
+        return {
+          ok: false,
+          status: 404
+        };
+      }) as unknown as typeof fetch;
+
+      const res = await geminiClient.validateApiKey('TestKey123', 'gemini-3.8-flash');
+      expect(res.valid).toBe(true);
+      expect(res.model).toBe('gemini-1.5-flash');
+    });
+
+    it('should validate API key via models API endpoint if generation models return 503', async () => {
+      const { geminiClient } = await import('../src/services/gemini/client');
+
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+        // All generation endpoints return 503
+        if (url.includes(':generateContent')) {
+          return {
+            ok: false,
+            status: 503,
+            json: async () => ({
+              error: {
+                message: 'Service unavailable',
+                status: 'UNAVAILABLE'
+              }
+            })
+          };
+        }
+
+        // Models list endpoint returns 200
+        if (url.includes('/models?key=')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              models: [{ name: 'models/gemini-1.5-flash' }]
+            })
+          };
+        }
+
+        return { ok: false, status: 404 };
+      }) as unknown as typeof fetch;
+
+      const res = await geminiClient.validateApiKey('TestKey123', 'gemini-3.8-flash');
+      expect(res.valid).toBe(true);
     });
   });
 });

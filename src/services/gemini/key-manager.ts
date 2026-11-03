@@ -130,6 +130,16 @@ export class ApiKeyPool {
   }
 
   /**
+   * Marks a key as timed out, setting a temporary cooldown and rotating to the next key.
+   */
+  public markTimeout(key: string, customDurationMs = 30000): void {
+    this.rateLimitedUntil.set(key, Date.now() + customDurationMs);
+    if (this.getActiveKey() === key && this.keys.length > 1) {
+      this.rotateToNextKey();
+    }
+  }
+
+  /**
    * Marks a key as invalid/unauthorized (e.g. 400 invalid key).
    */
   public markInvalid(key: string): void {

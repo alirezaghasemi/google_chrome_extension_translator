@@ -10,10 +10,11 @@ import { TranslationChunk } from '../../types/translation';
 import {
   createRegionTranslationPrompt,
   createMultimodalTranslationPrompt,
-  createBatchTranslationPrompt
+  createBatchTranslationPrompt,
+  createParagraphTranslationPrompt
 } from './prompts';
 import { REGION_TRANSLATION_SCHEMA, BATCH_TRANSLATION_SCHEMA } from './schemas';
-import { ExplanationLevel, TranslationStyle } from '../../types/settings';
+import { ExplanationLevel, TranslationStyle, GeminiModel } from '../../types/settings';
 import { parseApiKeys, ApiKeyPool } from './key-manager';
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -107,7 +108,12 @@ export class GeminiClient {
 
         const error = err as { name?: string; message?: string };
         if (error.name === 'AbortError') {
-          throw new GeminiApiError(`Gemini request timed out after ${timeoutMs / 1000}s.`, 'TIMEOUT');
+          lastError = new GeminiApiError(`Gemini request timed out after ${timeoutMs / 1000}s.`, 'TIMEOUT');
+          if (attempt < retryCount) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            continue;
+          }
+          throw lastError;
         }
 
         lastError = new GeminiApiError(
@@ -186,10 +192,19 @@ export class GeminiClient {
               (err.message.toLowerCase().includes('key') ||
                 err.message.toLowerCase().includes('api_key')));
 
+          const isServerUnavailable =
+            err.httpStatus === 503 ||
+            err.httpStatus === 500;
+
           if (isRateLimit) {
             this.keyPool.markRateLimited(activeKey);
             console.warn(
               `[GeminiClient] API key (${ApiKeyPool.maskKey(activeKey)}) rate limit exceeded. Failing over to next key (${attemptsCount}/${totalKeys})...`
+            );
+          } else if (isServerUnavailable) {
+            this.keyPool.markTimeout(activeKey, 30000);
+            console.warn(
+              `[GeminiClient] API key (${ApiKeyPool.maskKey(activeKey)}) server unavailable (${err.httpStatus}). Failing over to next key (${attemptsCount}/${totalKeys})...`
             );
           } else if (isInvalidKey) {
             this.keyPool.markInvalid(activeKey);
@@ -200,13 +215,26 @@ export class GeminiClient {
             console.warn(`[GeminiClient] Model ${model} is discontinued by Google. Auto-upgrading to gemini-3.8-flash...`);
             await storageService.saveSettings({ geminiModel: 'gemini-3.8-flash' });
             return this.executeRequest('gemini-3.8-flash', payload, timeoutMs);
+          } else if (err.code === 'TIMEOUT') {
+            this.keyPool.markTimeout(activeKey);
+            console.warn(
+              `[GeminiClient] API key (${ApiKeyPool.maskKey(activeKey)}) timed out after ${timeoutMs / 1000}s. Failing over to next key (${attemptsCount}/${totalKeys})...`
+            );
           } else {
-            // Other non-key errors (e.g. SAFETY_BLOCKED or TIMEOUT) should not rotate keys
+            // Other non-key errors (e.g. SAFETY_BLOCKED) should not rotate keys
             throw err;
           }
 
           if (attemptsCount < totalKeys && this.keyPool.hasAvailableKey()) {
             continue;
+          }
+
+          // If all keys hit 503/500 on this model, attempt fallback to gemini-1.5-flash
+          if (isServerUnavailable && model !== 'gemini-1.5-flash') {
+            const fallbackModel = 'gemini-1.5-flash';
+            console.warn(`[GeminiClient] All configured keys received ${err.httpStatus} on ${model}. Retrying with fallback model ${fallbackModel}...`);
+            await storageService.saveSettings({ geminiModel: fallbackModel });
+            return this.executeRequest(fallbackModel, payload, timeoutMs);
           }
         } else {
           throw err;
@@ -222,6 +250,15 @@ export class GeminiClient {
         'RATE_LIMIT_EXCEEDED',
         429,
         true
+      );
+    }
+
+    if (lastError?.code === 'TIMEOUT') {
+      throw new GeminiApiError(
+        totalKeys > 1
+          ? `Gemini request timed out after ${timeoutMs / 1000}s across all ${totalKeys} configured API keys. Please check your internet connection or proxy.`
+          : `Gemini request timed out after ${timeoutMs / 1000}s.`,
+        'TIMEOUT'
       );
     }
 
@@ -252,6 +289,44 @@ export class GeminiClient {
   }
 
   /**
+   * Translates a single text paragraph directly and quickly without explanation or schema overhead.
+   */
+  public async translateParagraph(
+    text: string,
+    options?: {
+      targetLanguage?: string;
+      style?: TranslationStyle;
+      timeoutMs?: number;
+    }
+  ): Promise<string> {
+    const settings = await storageService.getSettings();
+    const targetLang = options?.targetLanguage || settings.targetLanguage;
+    const style = options?.style || settings.translationStyle;
+    const timeout = options?.timeoutMs || Math.max(settings.requestTimeout || 60000, 60000);
+
+    const prompt = createParagraphTranslationPrompt(text, targetLang, style);
+
+    const payload: GeminiRequestPayload = {
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: settings.temperature
+      }
+    };
+
+    const rawResponse = await this.executeRequest(
+      settings.geminiModel,
+      payload,
+      timeout
+    );
+
+    return rawResponse
+      .trim()
+      .replace(/^```[a-z]*\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+  }
+
+  /**
    * Translates selected text, returning translation and optional technical term explanations.
    */
   public async translateRegionText(
@@ -261,12 +336,14 @@ export class GeminiClient {
       explanationLevel?: ExplanationLevel;
       style?: TranslationStyle;
       context?: string;
+      timeoutMs?: number;
     }
   ): Promise<StructuredTranslationPayload> {
     const settings = await storageService.getSettings();
     const targetLang = options?.targetLanguage || settings.targetLanguage;
     const expLevel = options?.explanationLevel || (settings.explainTerms ? settings.explanationLevel : 'none');
     const style = options?.style || settings.translationStyle;
+    const timeout = options?.timeoutMs || Math.max(settings.requestTimeout || 60000, 60000);
 
     const prompt = createRegionTranslationPrompt(text, targetLang, expLevel, style, options?.context);
 
@@ -282,7 +359,7 @@ export class GeminiClient {
     const rawResponse = await this.executeRequest(
       settings.geminiModel,
       payload,
-      settings.requestTimeout
+      timeout
     );
 
     return this.parseJsonSafe<StructuredTranslationPayload>(rawResponse, (raw) => ({
@@ -456,30 +533,102 @@ export class GeminiClient {
   }
 
   /**
+   * Probes Google models endpoint to verify key authorization and metadata.
+   */
+  public async checkKeyModelsList(apiKey: string): Promise<boolean> {
+    try {
+      const url = `${GEMINI_API_BASE}?key=${encodeURIComponent(apiKey)}`;
+      const res = await fetch(url, { method: 'GET' });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Helper to attempt validating a single key against candidate models.
+   */
+  private async probeKeyValidity(
+    key: string,
+    requestedModel: string
+  ): Promise<{ valid: boolean; model: string; error?: string }> {
+    const candidateModels = [
+      requestedModel,
+      'gemini-3.8-flash',
+      'gemini-1.5-flash',
+      'gemini-2.5-flash',
+      'gemini-2.0-flash'
+    ].filter((m, idx, arr) => arr.indexOf(m) === idx);
+
+    const payload: GeminiRequestPayload = {
+      contents: [{ role: 'user', parts: [{ text: 'Respond with "OK".' }] }],
+      generationConfig: { maxOutputTokens: 5 }
+    };
+
+    let lastError: GeminiApiError | null = null;
+    for (const testModel of candidateModels) {
+      try {
+        await this.executeSingleKeyRequest(testModel, key, payload, 8000, 0);
+        return { valid: true, model: testModel };
+      } catch (err: unknown) {
+        if (err instanceof GeminiApiError) {
+          lastError = err;
+          // Fatal key errors: invalid key or unauthorized
+          if (
+            err.code === 'INVALID_API_KEY' ||
+            err.httpStatus === 401 ||
+            err.httpStatus === 403 ||
+            (err.httpStatus === 400 &&
+              (err.message.toLowerCase().includes('key') || err.message.toLowerCase().includes('api_key')))
+          ) {
+            return { valid: false, model: testModel, error: err.message };
+          }
+
+          // If 404, 500, or 503, try next candidate model
+          if (err.httpStatus === 404 || err.httpStatus === 500 || err.httpStatus === 503) {
+            continue;
+          }
+        }
+      }
+    }
+
+    // If generation endpoints were unavailable (e.g. 503/500/timeout), check if the key is authorized via models list API
+    const isAuthentic = await this.checkKeyModelsList(key);
+    if (isAuthentic) {
+      return { valid: true, model: requestedModel };
+    }
+
+    return {
+      valid: false,
+      model: requestedModel,
+      error: lastError?.message || 'Verification failed'
+    };
+  }
+
+  /**
    * Validates one or multiple API keys.
    */
   public async validateApiKey(
     apiKey: string,
     model = 'gemini-3.8-flash'
   ): Promise<{ valid: boolean; model: string; error?: string; totalKeys?: number; validCount?: number }> {
-    const effectiveModel = model === 'gemini-2.5-flash' ? 'gemini-3.8-flash' : model;
     const keys = parseApiKeys(apiKey);
     if (keys.length === 0) {
-      return { valid: false, model: effectiveModel, error: 'API key cannot be empty' };
+      return { valid: false, model, error: 'API key cannot be empty' };
     }
 
     if (keys.length > 1) {
-      const results = await this.validateAllKeys(keys, effectiveModel);
+      const results = await this.validateAllKeys(keys, model);
       const validCount = results.filter((r) => r.valid).length;
       const allValid = validCount === keys.length;
 
       if (allValid) {
-        return { valid: true, model: effectiveModel, totalKeys: keys.length, validCount };
+        return { valid: true, model, totalKeys: keys.length, validCount };
       } else {
         const failed = results.find((r) => !r.valid);
         return {
           valid: false,
-          model: effectiveModel,
+          model,
           totalKeys: keys.length,
           validCount,
           error: `${validCount}/${keys.length} keys valid. ${failed ? failed.maskedKey + ': ' + failed.error : ''}`
@@ -487,89 +636,41 @@ export class GeminiClient {
       }
     }
 
-    try {
-      const payload: GeminiRequestPayload = {
-        contents: [{ role: 'user', parts: [{ text: 'Respond with "OK".' }] }],
-        generationConfig: { maxOutputTokens: 5 }
-      };
-
-      await this.executeSingleKeyRequest(effectiveModel, keys[0], payload, 10000, 0);
-      return { valid: true, model: effectiveModel, totalKeys: 1, validCount: 1 };
-    } catch (err: unknown) {
-      const error = err as GeminiApiError;
-
-      // If 404 model discontinued error was returned for an older model, try gemini-3.8-flash fallback
-      if (error.httpStatus === 404 && effectiveModel !== 'gemini-3.8-flash') {
-        try {
-          const payload: GeminiRequestPayload = {
-            contents: [{ role: 'user', parts: [{ text: 'Respond with "OK".' }] }],
-            generationConfig: { maxOutputTokens: 5 }
-          };
-          await this.executeSingleKeyRequest('gemini-3.8-flash', keys[0], payload, 10000, 0);
-          await storageService.saveSettings({ geminiModel: 'gemini-3.8-flash' });
-          return { valid: true, model: 'gemini-3.8-flash', totalKeys: 1, validCount: 1 };
-        } catch {
-          // fall through to original error
-        }
+    const probe = await this.probeKeyValidity(keys[0], model);
+    if (probe.valid) {
+      if (probe.model !== model) {
+        await storageService.saveSettings({ geminiModel: probe.model as GeminiModel });
       }
-
       return {
-        valid: false,
-        model: effectiveModel,
+        valid: true,
+        model: probe.model,
         totalKeys: 1,
-        validCount: 0,
-        error: error.message || 'Verification failed'
+        validCount: 1
       };
     }
+
+    return {
+      valid: false,
+      model,
+      totalKeys: 1,
+      validCount: 0,
+      error: probe.error || 'Verification failed'
+    };
   }
 
   public async validateAllKeys(
     keys: string[],
     model = 'gemini-3.8-flash'
   ): Promise<Array<{ key: string; maskedKey: string; valid: boolean; error?: string }>> {
-    const effectiveModel = model === 'gemini-2.5-flash' ? 'gemini-3.8-flash' : model;
     const results = [];
     for (const key of keys) {
-      try {
-        const payload: GeminiRequestPayload = {
-          contents: [{ role: 'user', parts: [{ text: 'Respond with "OK".' }] }],
-          generationConfig: { maxOutputTokens: 5 }
-        };
-        await this.executeSingleKeyRequest(effectiveModel, key, payload, 10000, 0);
-        results.push({
-          key,
-          maskedKey: ApiKeyPool.maskKey(key),
-          valid: true
-        });
-      } catch (err: unknown) {
-        const error = err as GeminiApiError;
-
-        // Fallback to gemini-3.8-flash if 404 model discontinued
-        if (error.httpStatus === 404 && effectiveModel !== 'gemini-3.8-flash') {
-          try {
-            const payload: GeminiRequestPayload = {
-              contents: [{ role: 'user', parts: [{ text: 'Respond with "OK".' }] }],
-              generationConfig: { maxOutputTokens: 5 }
-            };
-            await this.executeSingleKeyRequest('gemini-3.8-flash', key, payload, 10000, 0);
-            results.push({
-              key,
-              maskedKey: ApiKeyPool.maskKey(key),
-              valid: true
-            });
-            continue;
-          } catch {
-            // fall through
-          }
-        }
-
-        results.push({
-          key,
-          maskedKey: ApiKeyPool.maskKey(key),
-          valid: false,
-          error: error.message || 'Verification failed'
-        });
-      }
+      const probe = await this.probeKeyValidity(key, model);
+      results.push({
+        key,
+        maskedKey: ApiKeyPool.maskKey(key),
+        valid: probe.valid,
+        error: probe.error
+      });
     }
     return results;
   }

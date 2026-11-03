@@ -53,7 +53,10 @@ export class GeminiApiError extends Error {
     }
 
     if (status === 503 || status === 500) {
-      return new GeminiApiError('Gemini service is temporarily unavailable. Please retry shortly.', 'UNKNOWN_ERROR', status, true);
+      const msg = rawMsg
+        ? `Gemini service is temporarily unavailable (${rawMsg}). Please retry shortly or select an alternative model.`
+        : 'Gemini service is temporarily unavailable. Please retry shortly.';
+      return new GeminiApiError(msg, 'UNKNOWN_ERROR', status, true);
     }
 
     return new GeminiApiError(`Gemini API error (${status}): ${rawMsg || 'Unexpected error'}`, 'UNKNOWN_ERROR', status, false);
